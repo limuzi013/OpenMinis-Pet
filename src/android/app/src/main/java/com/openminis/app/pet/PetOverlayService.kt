@@ -15,16 +15,19 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.openminis.app.MinisApp
 import com.openminis.app.R
+import com.openminis.app.service.SessionActivityTracker
 import com.openminis.app.speech.RecognitionError
 import com.openminis.app.speech.RecognitionState
 import com.openminis.app.speech.SpeechRecognitionManager
@@ -50,8 +53,8 @@ class PetOverlayService : Service() {
         private const val NOTIFICATION_ID = 9417
         private const val TAG = "PetOverlayService"
 
-        private val TAP_STATES =
-            listOf(PetState.WAVING, PetState.JUMPING, PetState.REVIEW, PetState.WAITING)
+        // REVIEW / WAITING are semantic Agent states, never personality flourishes.
+        private val TAP_STATES = listOf(PetState.WAVING, PetState.JUMPING)
     }
 
     private lateinit var windowManager: WindowManager
@@ -73,10 +76,15 @@ class PetOverlayService : Service() {
     private val readAloudPlayer by lazy { com.openminis.app.speech.ReadAloudPlayer(this) }
     private var askJob: Job? = null
     private var inputMode = false
+    /** Retained across an async sprite decode so a service started on a dark screen
+     * never starts animating/timing only because it missed the screen-off broadcast. */
+    private var screenAwake = true
     /** True while a voice-capture start is still resolving; a second tap clears it to cancel. */
     @Volatile private var voiceStarting = false
     /** Non-null while the spritesheet decode/attach is in flight. */
     private var petLoadJob: Job? = null
+    /** Invalidates a stale async decode when reload/hide wins the race. */
+    private var mountGeneration = 0L
 
     private val randomMood = object : Runnable {
         override fun run() {
@@ -92,9 +100,7 @@ class PetOverlayService : Service() {
             ) {
                 val next = listOf(
                     PetState.IDLE,
-                    PetState.WAITING,
                     PetState.WAVING,
-                    PetState.REVIEW,
                     PetState.JUMPING,
                 ).random()
                 setTransientState(next, if (next == PetState.JUMPING) 850L else 1200L)
@@ -118,6 +124,7 @@ class PetOverlayService : Service() {
     }
 
     private fun setAwake(awake: Boolean) {
+        screenAwake = awake
         if (awake) {
             petView?.sprite?.resumeAnimation()
             behavior?.resumeTimers()
@@ -133,6 +140,7 @@ class PetOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        screenAwake = getSystemService(PowerManager::class.java)?.isInteractive ?: true
         createNotificationChannel()
         startAsForeground()
         ContextCompat.registerReceiver(
@@ -153,18 +161,21 @@ class PetOverlayService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            ACTION_RELOAD -> { hidePet(); showPetIfPossible() }
+            ACTION_RELOAD -> {
+                hidePet()
+                if (!attachPetOrStop(startId)) return START_NOT_STICKY
+            }
             ACTION_SET_STATE -> {
-                showPetIfPossible()
                 transientReset?.let(main::removeCallbacks)
                 transientReset = null
                 val name = intent.getStringExtra(EXTRA_STATE)
                 val state = runCatching { PetState.valueOf(name.orEmpty()) }.getOrDefault(PetState.IDLE)
                 val previous = baseState
                 baseState = state
+                if (!attachPetOrStop(startId)) return START_NOT_STICKY
                 applyAgentState(previous, state)
             }
-            else -> showPetIfPossible()
+            else -> if (!attachPetOrStop(startId)) return START_NOT_STICKY
         }
         return START_STICKY
     }
@@ -198,7 +209,10 @@ class PetOverlayService : Service() {
         val view = petView
         if (state != PetState.IDLE) behavior?.wakeIfTucked()
 
-        if (previous == PetState.RUNNING && state == PetState.IDLE) {
+        if (
+            state == PetState.IDLE &&
+            (previous == PetState.RUNNING || previous == PetState.WAITING || previous == PetState.REVIEW)
+        ) {
             setTransientState(PetState.WAVING, 900L)
             speak("搞定啦！")
         } else {
@@ -211,6 +225,22 @@ class PetOverlayService : Service() {
                 else -> Unit
             }
         }
+    }
+
+    /**
+     * The pet service can be restored after the Agent foreground service has
+     * already begun a run. Reconcile its first frame from the same tracker the
+     * bridge observes instead of waiting for a later status-string emission.
+     */
+    private fun restoreAgentVisualState() {
+        val state = PetAgentStateResolver.resolve(
+            sessionCount = SessionActivityTracker.activeSessions.value.size,
+            toolStatus = SessionActivityTracker.currentToolStatus.value,
+        )
+        if (state == baseState) return
+        val previous = baseState
+        baseState = state
+        applyAgentState(previous, state)
     }
 
     private fun speak(message: String, durationMs: Long = 2_600L) {
@@ -246,7 +276,10 @@ class PetOverlayService : Service() {
                     v.showBubble(reply, 9_000L)
                 }
                 v.sprite.setState(baseState)
-                setTransientState(PetState.WAVING, 900L)
+                // Do not show a success reaction over an unrelated real Agent
+                // task. The direct pet chat is lightweight; the agent status
+                // remains the authoritative visual when it is busy.
+                if (baseState == PetState.IDLE) setTransientState(PetState.WAVING, 900L)
                 // A spoken question is a voice-conversation turn. Reuse the
                 // App's Voice Output provider/API selection, but do not require
                 // a second pet-only "read replies" toggle.
@@ -296,10 +329,14 @@ class PetOverlayService : Service() {
                 val app = applicationContext as? MinisApp
                 val repository = app?.providerRepositoryOrNull
                 if (repository == null) {
+                    voiceStarting = false
+                    window.setVoiceActive(false)
                     window.setStatus("App 模型配置还没有初始化")
                     return@launch
                 }
                 if (withTimeoutOrNull(8_000L) { repository.awaitConfigLoaded(); true } != true) {
+                    voiceStarting = false
+                    window.setVoiceActive(false)
                     window.setStatus("语音模型配置加载超时")
                     return@launch
                 }
@@ -338,6 +375,7 @@ class PetOverlayService : Service() {
             }.onFailure { error ->
                 voiceStarting = false
                 android.util.Log.w(TAG, "voice toggle failed: ${error.message}")
+                chatWindow?.setVoiceActive(false)
                 chatWindow?.setStatus(error.message ?: "语音启动失败")
             }
         }
@@ -480,6 +518,37 @@ class PetOverlayService : Service() {
 
     // ------------------------------------------------------------- overlay
 
+    /**
+     * A persisted preference alone is not evidence that an overlay can be
+     * shown. In particular, the user can turn the switch on before granting
+     * SYSTEM_ALERT_WINDOW. Keeping a foreground notification alive in that
+     * state says "running" while there is no pet, and no later callback asks
+     * WindowManager to retry. Stop cleanly instead; PetControlActivity retries
+     * after the permission page returns and MinisApp retries after restoration.
+     */
+    private fun attachPetOrStop(startId: Int): Boolean {
+        if (!PetPreferences.isEnabled(this)) {
+            hidePet()
+            stopSelf(startId)
+            return false
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            android.util.Log.i(TAG, "Pet enabled but overlay permission is not granted; waiting for user grant")
+            hidePet()
+            stopSelf(startId)
+            return false
+        }
+        showPetIfPossible()
+        if (petView == null && petLoadJob?.isActive != true) {
+            // Usually a deleted/corrupt selected package. Do not hold an FGS
+            // notification claiming that an invisible pet is still present.
+            android.util.Log.w(TAG, "No mountable pet package is selected")
+            stopSelf(startId)
+            return false
+        }
+        return true
+    }
+
     private fun showPetIfPossible() {
         if (petView != null || petLoadJob?.isActive == true) return
         if (!PetPreferences.isEnabled(this)) return
@@ -520,12 +589,19 @@ class PetOverlayService : Service() {
         // sheet, OOM) are caught here instead of on the main thread, so the
         // boot-loop protection above still holds. A fresh onStartCommand while
         // this is in flight is ignored (petLoadJob), and hidePet() cancels it.
+        val generation = ++mountGeneration
         petLoadJob = serviceScope.launch {
             val decoded = withContext(Dispatchers.IO) {
                 runCatching { view.sprite.loadPet(selected) }
             }
+            // BitmapFactory is not cancellable on every OEM. A canceled old
+            // decode must never attach over a newer reload once it finally
+            // returns to the main dispatcher.
+            if (generation != mountGeneration) return@launch
             if (decoded.isFailure) {
                 android.util.Log.w(TAG, "Unable to load pet sprites: ${decoded.exceptionOrNull()?.message}")
+                petLoadJob = null
+                stopSelf()
                 return@launch
             }
 
@@ -560,7 +636,10 @@ class PetOverlayService : Service() {
             behavior = engine
 
             installTouch(view, lp)
-            clampPosition(lp)
+            // The view has not been attached yet, so its measured dimensions
+            // are zero. Clamp against the known sprite dimensions now, then
+            // once more after layout in case the actual content differs.
+            clampPosition(lp, spriteWidth, spriteHeight)
             val attached = runCatching {
                 windowManager.addView(view, lp)
                 true
@@ -570,13 +649,35 @@ class PetOverlayService : Service() {
             }
             if (!attached) {
                 behavior = null
+                petLoadJob = null
+                stopSelf()
                 return@launch
             }
             params = lp
             petView = view
-            engine.reset()
-            main.removeCallbacks(randomMood)
-            main.postDelayed(randomMood, 3_500L)
+            petLoadJob = null
+            restoreAgentVisualState()
+            if (screenAwake) {
+                engine.reset()
+                main.removeCallbacks(randomMood)
+                main.postDelayed(randomMood, 3_500L)
+            } else {
+                // A process can be restored while the screen is already off;
+                // ACTION_SCREEN_OFF is not replayed to a newly registered
+                // receiver, so retain the state sampled in onCreate.
+                view.sprite.pauseAnimation()
+                engine.pauseTimers()
+            }
+            view.post {
+                if (petView !== view || params !== lp) return@post
+                clampPosition(
+                    lp,
+                    view.width.takeIf { it > 0 } ?: spriteWidth,
+                    view.height.takeIf { it > 0 } ?: spriteHeight,
+                )
+                runCatching { windowManager.updateViewLayout(view, lp) }
+                PetPreferences.setPosition(this@PetOverlayService, lp.x, lp.y)
+            }
         }
     }
 
@@ -601,6 +702,7 @@ class PetOverlayService : Service() {
         var startX = 0
         var startY = 0
         var dragged = false
+        val dragSlop = ViewConfiguration.get(this).scaledTouchSlop
 
         val gesture = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
@@ -659,7 +761,7 @@ class PetOverlayService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - downRawX).toInt()
                     val dy = (event.rawY - downRawY).toInt()
-                    if (abs(dx) > 6 || abs(dy) > 6) dragged = true
+                    if (abs(dx) > dragSlop || abs(dy) > dragSlop) dragged = true
                     if (dragged && !inputMode) {
                         lp.x = startX + dx
                         lp.y = startY + dy
@@ -675,6 +777,10 @@ class PetOverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (dragged && !inputMode) {
+                        // Persist a valid pre-snap location as well as the
+                        // final edge. If the process dies during the animation,
+                        // restoration still lands where the user last put it.
+                        PetPreferences.setPosition(this, lp.x, lp.y)
                         setTransientState(baseState, 200L)
                         behavior?.onDragReleased { x, y -> PetPreferences.setPosition(this, x, y) }
                     }
@@ -731,19 +837,30 @@ class PetOverlayService : Service() {
             Rect(0, 0, dm.widthPixels, dm.heightPixels)
         }
 
-    private fun clampPosition(lp: WindowManager.LayoutParams) {
+    private fun clampPosition(
+        lp: WindowManager.LayoutParams,
+        contentWidth: Int = petView?.width?.takeIf { it > 0 } ?: 0,
+        contentHeight: Int = petView?.height?.takeIf { it > 0 } ?: 0,
+    ) {
         val bounds = screenBounds()
-        val view = petView
-        val width = view?.width?.takeIf { it > 0 } ?: 0
-        val height = view?.height?.takeIf { it > 0 } ?: 0
-        val maxX = (bounds.width() - width).coerceAtLeast(0)
-        val maxY = (bounds.height() - height).coerceAtLeast(0)
-        lp.x = lp.x.coerceIn(0, maxX)
-        lp.y = lp.y.coerceIn(0, maxY)
+        val (x, y) = PetOverlayGeometry.clamp(
+            x = lp.x,
+            y = lp.y,
+            contentWidth = contentWidth,
+            contentHeight = contentHeight,
+            viewportWidth = bounds.width(),
+            viewportHeight = bounds.height(),
+        )
+        lp.x = x
+        lp.y = y
     }
 
     private fun hidePet() {
+        // Invalidate before cancellation because an in-flight BitmapFactory
+        // decode may only observe cancellation after it returns to main.
+        mountGeneration++
         petLoadJob?.cancel()
+        petLoadJob = null
         if (inputMode || chatWindow != null) setInputMode(false)
         behavior?.stop()
         behavior = null

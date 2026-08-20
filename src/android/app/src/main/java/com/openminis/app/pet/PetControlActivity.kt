@@ -65,6 +65,13 @@ class PetControlActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        // The overlay permission is granted in a separate system screen. If
+        // the user enabled the pet first, the service deliberately stopped
+        // rather than showing a misleading forever-notification; this return
+        // path is the reliable retry after the grant (and after OEM eviction).
+        if (uiState.enabled && uiState.hasOverlayPermission) {
+            PetBridge.startIfEnabled(this)
+        }
     }
 
     private fun buildActions() = PetActions(

@@ -80,6 +80,18 @@ internal class PetChatEngine(private val context: Context) {
 
         val provider = ProviderFactory.create(instance, apiKey, entry.model, context)
         val messages = history.toList() + LLMMessage(role = LLMMessage.Role.USER, content = question)
+        // The pet intentionally is not an Agent turn, but it is still a real
+        // user turn. Record it before the network call so App history never
+        // claims that a failed/cancelled pet question was never asked. A later
+        // successful reply is appended to the same ordinary chat session.
+        val persistedSessionId = try {
+            persistUserTurn(app, entry, question)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            android.util.Log.w("PetChatEngine", "could not persist pet question: ${t.message}")
+            null
+        }
 
         val response = withTimeoutOrNull(60_000L) {
             // Transient network/5xx failures retried with jittered backoff
@@ -104,10 +116,15 @@ internal class PetChatEngine(private val context: Context) {
 
         val reply = condense(raw)
         remember(question, reply)
-        // Persist before returning so the bubble and the session list can never
-        // disagree about what was said.
-        runCatching { persist(app, entry, question, reply) }
-            .onFailure { android.util.Log.w("PetChatEngine", "persist failed: ${it.message}") }
+        if (persistedSessionId != null) {
+            try {
+                persistAssistantTurn(app, persistedSessionId, reply)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                android.util.Log.w("PetChatEngine", "could not persist pet reply: ${t.message}")
+            }
+        }
         // The try block must itself yield a Result for the expression to type
         // as Result<String> alongside the failure branch.
         Result.success(reply)
@@ -127,13 +144,12 @@ internal class PetChatEngine(private val context: Context) {
      * session per question — a list flooded with single-line sessions would be
      * worse than no history at all.
      */
-    private suspend fun persist(
+    private suspend fun persistUserTurn(
         app: MinisApp,
         entry: com.openminis.app.data.model.ModelEntry,
         question: String,
-        reply: String,
-    ) {
-        val chat = app.chatRepositoryOrNull ?: return
+    ): String? {
+        val chat = app.chatRepositoryOrNull ?: return null
         val existing = PetPreferences.chatSessionId(context)
             ?.takeIf { chat.getSession(it) != null }
         val sessionId = existing ?: chat.createSession(
@@ -142,6 +158,15 @@ internal class PetChatEngine(private val context: Context) {
         ).id.also { PetPreferences.setChatSessionId(context, it) }
 
         chat.appendMessage(sessionId, "user", textParts(question))
+        return sessionId
+    }
+
+    private suspend fun persistAssistantTurn(
+        app: MinisApp,
+        sessionId: String,
+        reply: String,
+    ) {
+        val chat = app.chatRepositoryOrNull ?: return
         chat.appendMessage(sessionId, "assistant", textParts(reply))
     }
 

@@ -31,6 +31,7 @@ import kotlin.math.roundToInt
 class PetChatWindowView(context: Context) : LinearLayout(context) {
     companion object {
         const val WINDOW_WIDTH_DP = 344
+        private const val IDLE_STATUS = "使用 App 默认模型；对话保存到「桌面宠物」会话"
     }
 
     var onSend: ((String) -> Unit)? = null
@@ -80,7 +81,7 @@ class PetChatWindowView(context: Context) : LinearLayout(context) {
         addView(buildHeader(), LayoutParams(LayoutParams.MATCH_PARENT, dp(42)))
 
         status.apply {
-            text = "与 App 共用模型和会话"
+            text = IDLE_STATUS
             textSize = 11f
             setTextColor(textSecondary)
             setPadding(dp(2), 0, dp(2), dp(7))
@@ -236,12 +237,12 @@ class PetChatWindowView(context: Context) : LinearLayout(context) {
 
     fun setBusy(busy: Boolean) {
         send.isEnabled = !busy
-        status.text = if (busy) "Minis 正在思考…" else "与 App 共用模型和会话"
+        status.text = if (busy) "Minis 正在思考…" else IDLE_STATUS
     }
 
     fun setVoiceActive(active: Boolean) {
         mic.text = if (active) "■" else "🎙"
-        status.text = if (active) "正在听…" else if (send.isEnabled) "与 App 共用模型和会话" else "Minis 正在思考…"
+        status.text = if (active) "正在听…" else if (send.isEnabled) IDLE_STATUS else "Minis 正在思考…"
     }
 
     fun setStatus(message: String) {

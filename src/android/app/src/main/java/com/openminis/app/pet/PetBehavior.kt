@@ -82,7 +82,7 @@ internal class PetBehavior(
         val (x, y) = position()
         val (w, _) = size()
         val area = bounds()
-        val targetX = if (x + w / 2 <= area.width() / 2) 0 else (area.width() - w).coerceAtLeast(0)
+        val targetX = PetOverlayGeometry.nearestHorizontalEdge(x, w, area.width())
         animateTo(targetX, y, SNAP_SPEED_DP_PER_SEC) {
             val (fx, fy) = position()
             onSettled(fx, fy)
@@ -97,7 +97,7 @@ internal class PetBehavior(
         val (x, y) = position()
         val (w, _) = size()
         val area = bounds()
-        val targetX = if (x < area.width() / 2) 0 else (area.width() - w).coerceAtLeast(0)
+        val targetX = PetOverlayGeometry.nearestHorizontalEdge(x, w, area.width())
         isTucked = false
         onTuckChanged(false)
         animateTo(targetX, y, RETURN_SPEED_DP_PER_SEC) { rescheduleIdleTimers() }

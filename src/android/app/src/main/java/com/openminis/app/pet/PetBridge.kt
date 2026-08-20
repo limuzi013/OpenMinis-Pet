@@ -30,22 +30,7 @@ object PetBridge {
 
     fun updateAgentStatus(context: Context, sessionCount: Int, toolStatus: String?) {
         if (!PetPreferences.isEnabled(context)) return
-        val status = toolStatus.orEmpty().lowercase()
-        val state = when {
-            // English + localized keywords: OEM/localized builds report status
-            // text in other languages, so match common Chinese terms too
-            // (the canonical fix would be a structured status code, but the
-            // bridge layer receives free text today).
-            status.contains("fail") || status.contains("error") || status.contains("cancel") ||
-                status.contains("失败") || status.contains("出错") || status.contains("取消") -> PetState.FAILED
-            status.contains("review") || status.contains("inspect") || status.contains("check") ||
-                status.contains("审查") || status.contains("检查") -> PetState.REVIEW
-            status.contains("wait") || status.contains("queue") || status.contains("pending") ||
-                status.contains("等待") || status.contains("排队") -> PetState.WAITING
-            sessionCount > 0 -> PetState.RUNNING
-            else -> PetState.IDLE
-        }
-        setState(context, state)
+        setState(context, PetAgentStateResolver.resolve(sessionCount, toolStatus))
     }
 
     fun startIfEnabled(context: Context) {
