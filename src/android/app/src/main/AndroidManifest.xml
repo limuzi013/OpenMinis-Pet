@@ -188,6 +188,12 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="minis" />
             </intent-filter>
+            <!-- A fallback contract for OEMs that invoke the assistant through
+                 ACTION_ASSIST instead of the VoiceInteractionService session. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- T-android-dynamic-app-icon: launcher-icon aliases. Exactly
@@ -551,7 +557,7 @@
                 android:value="User-enabled animated desktop pet overlay" />
         </service>
 
-        <!-- Default digital assistant (RoleManager.ROLE_ASSIST) support:
+        <!-- Default digital assistant (RoleManager.ROLE_ASSISTANT) support:
              long-press Home / voice invocation opens the app. -->
         <service
             android:name=".voice.AssistService"
@@ -568,10 +574,21 @@
         <service
             android:name=".voice.AssistSessionService"
             android:exported="true"
-            android:permission="android.permission.BIND_VOICE_INTERACTION_SERVICE">
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <!-- The voice-interaction metadata must point to a real recognition
+             service.  This bridge delegates to the user's existing system ASR
+             service and never recursively selects itself. -->
+        <service
+            android:name=".voice.AssistRecognitionService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE">
             <intent-filter>
-                <action android:name="android.service.voice.VoiceInteractionSessionService" />
+                <action android:name="android.speech.RecognitionService" />
             </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/assist_recognition_service" />
         </service>
     </application>
 </manifest>

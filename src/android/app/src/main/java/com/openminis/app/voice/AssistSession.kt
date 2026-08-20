@@ -33,7 +33,11 @@ class AssistSession(
         lastLaunchAt = now
         runCatching {
             val intent = Intent(appContext, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .setAction(Intent.ACTION_ASSIST)
+                // MainActivity is singleTask. CLEAR_TOP makes every system
+                // assistant gesture bring the existing chat task forward
+                // rather than layering another task behind the session.
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             appContext.startActivity(intent)
         }
         finish()

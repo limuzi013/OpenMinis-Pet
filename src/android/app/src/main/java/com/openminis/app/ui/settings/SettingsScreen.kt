@@ -1,8 +1,10 @@
 package com.openminis.app.ui.settings
 
-import android.content.Intent
 import android.app.role.RoleManager
 import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -63,6 +65,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,6 +75,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.openminis.app.tools.SubagentLimits
@@ -85,6 +89,17 @@ import com.openminis.app.BuildConfig
 import com.openminis.app.R
 import com.openminis.app.pet.PetControlActivity
 import com.openminis.app.ui.components.openExternalUrl
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+
+/** RoleManager was added in Android 10; older devices use voice-input Settings. */
+@Suppress("NewApi")
+private fun Context.assistantRoleManagerOrNull(): RoleManager? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        getSystemService(RoleManager::class.java)
+    } else {
+        null
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,22 +141,42 @@ fun SettingsScreen(
     onAboutClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val roleManager = remember { context.getSystemService(Context.ROLE_SERVICE) as RoleManager }
-    val roleAssist = remember {
-        // AOSP uses android.app.role.Assist; Xiaomi/MIUI exposes
-        // android.app.role.ASSISTANT. Probe availability so the row works on
-        // both instead of hard-coding one name.
-        listOf("android.app.role.ASSISTANT", "android.app.role.Assist")
-            .firstOrNull { roleManager.isRoleAvailable(it) }
-            ?: "android.app.role.ASSISTANT"
-    }
+    val roleManager = remember(context) { context.assistantRoleManagerOrNull() }
     var showFeedbackSheet by remember { mutableStateOf(false) }
     var showSubagentLimits by remember { mutableStateOf(false) }
-    val roleHeld = remember { mutableStateOf(roleManager.isRoleHeld(roleAssist)) }
-    val roleAvailable = remember { roleManager.isRoleAvailable(roleAssist) }
+    var roleHeld by remember { mutableStateOf(false) }
+    var roleAvailable by remember { mutableStateOf(false) }
+
+    fun refreshAssistantRole() {
+        val manager = roleManager
+        if (manager == null) {
+            roleAvailable = false
+            roleHeld = false
+            return
+        }
+        roleAvailable = runCatching {
+            manager.isRoleAvailable(RoleManager.ROLE_ASSISTANT)
+        }.getOrDefault(false)
+        roleHeld = roleAvailable && runCatching {
+            manager.isRoleHeld(RoleManager.ROLE_ASSISTANT)
+        }.getOrDefault(false)
+    }
+
+    // The role can also be changed from the OEM Settings app, so re-check it
+    // whenever this screen returns to foreground instead of retaining a stale row.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, roleManager) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshAssistantRole()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        refreshAssistantRole()
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val assistLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        roleHeld.value = roleManager.isRoleHeld(roleAssist)
-        Toast.makeText(context, if (roleHeld.value) "已设为默认数字助手" else "未设置为默认助手", Toast.LENGTH_SHORT).show()
+        refreshAssistantRole()
+        Toast.makeText(context, if (roleHeld) "已设为默认数字助手" else "未设置为默认助手", Toast.LENGTH_SHORT).show()
     }
     Scaffold(
         topBar = {
@@ -259,14 +294,25 @@ fun SettingsScreen(
                     icon = Icons.Outlined.RecordVoiceOver,
                     iconColor = Color(0xFF30B0C7),
                     title = "默认数字助手",
-                    subtitle = if (!roleAvailable) "此设备不支持切换默认助手"
-                        else if (roleHeld.value) "已是系统默认数字助手"
-                        else "设为默认后，长按 Home / 语音唤起会打开 App",
+                    subtitle = when {
+                        roleHeld -> "已是系统默认数字助手"
+                        roleManager == null -> "在系统默认助手设置中选择 OpenMinis"
+                        roleAvailable -> "设为默认后，长按 Home / 电源键助手手势会打开 App"
+                        else -> "打开系统默认助手设置以选择 OpenMinis"
+                    },
                     onClick = {
                         when {
-                            !roleAvailable -> Toast.makeText(context, "此设备不支持切换默认助手", Toast.LENGTH_SHORT).show()
-                            roleHeld.value -> Toast.makeText(context, "已是默认数字助手", Toast.LENGTH_SHORT).show()
-                            else -> assistLauncher.launch(roleManager.createRequestRoleIntent(roleAssist))
+                            roleHeld -> Toast.makeText(context, "已是默认数字助手", Toast.LENGTH_SHORT).show()
+                            roleManager != null && roleAvailable -> {
+                                assistLauncher.launch(
+                                    roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT),
+                                )
+                            }
+                            else -> runCatching {
+                                context.startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+                            }.onFailure {
+                                Toast.makeText(context, "此设备未提供默认助手设置", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     },
                 )
