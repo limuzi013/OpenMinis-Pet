@@ -17,6 +17,10 @@ captures/
 *.apk
 output-metadata.json
 
+# Curated, checksum-documented APKs published with this repository.
+!releases/
+!releases/*.apk
+
 # IntelliJ
 *.iml
 .idea/

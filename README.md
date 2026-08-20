@@ -9,6 +9,20 @@
 
 基线：官方 `1.12`（versionCode 24）。上游原始说明见 [README-upstream.md](README-upstream.md)。
 
+## 下载已验证 APK
+
+[下载 `OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk)
+
+- 版本：`1.12-pet.11-SNAPSHOT`（versionCode 31）
+- 架构：`arm64-v8a`
+- 大小：`51,563,132` bytes
+- SHA-256：`3dcc514ebded6f7d706b9d7e703ca0bc28002880e4ad8e247e6dba8cb1fb145f`
+- 签名：debug keystore，仅供开发、自测和源码对应验证
+
+下载后可用 `adb install -r OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk` 安装。这个 APK
+对应下面所述的 Harness 风格 Web Remote 事件流工作台；后续快照如更换二进制，会同步更新
+文件名、字节数和校验值。
+
 ## 和官方版的关系
 
 | | 官方 OpenMinis | 本分支 |

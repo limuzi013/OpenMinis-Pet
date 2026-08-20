@@ -2,7 +2,9 @@
 
 ## Unreleased · `1.12-pet.11-SNAPSHOT`
 
-This is a development note, not a published-artifact manifest. The APK name, byte size, and SHA-256 must be added only after a successful final build.
+The verified APK is tracked with the source at
+[`releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk).
+It is a development/debug-signed artifact rather than a production Play release.
 
 ### Web Remote: source-adapted Harness workbench
 
@@ -33,6 +35,7 @@ Verified debug build: `OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`
 - ABI: `arm64-v8a`
 - Size: `51,563,132` bytes
 - SHA-256: `3dcc514ebded6f7d706b9d7e703ca0bc28002880e4ad8e247e6dba8cb1fb145f`
+- Repository path: [`releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk)
 
 Built with `./gradlew :app:assembleDebug --no-daemon` after the WebSocket event-log and
 tool-trajectory regression tests passed.
