@@ -199,6 +199,8 @@ class DebugRPCHandler(private val context: Context) {
             // Skills
             "skills.list" -> SkillRpcMethods.list(context)
             "skills.get" -> SkillRpcMethods.get(context, params)
+            "skills.create" -> SkillRpcMethods.create(context, params)
+            "skills.update" -> SkillRpcMethods.update(context, params)
             "skills.toggle" -> SkillRpcMethods.toggle(context, params)
             "skills.delete" -> SkillRpcMethods.delete(context, params)
 
@@ -214,8 +216,25 @@ class DebugRPCHandler(private val context: Context) {
 
             // MCP
             "mcp.list" -> McpRpcMethods.list(context)
+            "mcp.get" -> McpRpcMethods.get(context, params)
+            "mcp.create" -> McpRpcMethods.create(context, params)
+            "mcp.update" -> McpRpcMethods.update(context, params)
+            "mcp.import" -> McpRpcMethods.importJson(context, params)
             "mcp.toggle" -> McpRpcMethods.toggle(context, params)
             "mcp.delete" -> McpRpcMethods.delete(context, params)
+
+            // Environment values remain write-only over RPC.
+            "environments.list" -> EnvironmentRpcMethods.list(context)
+            "environments.create" -> EnvironmentRpcMethods.create(context, params)
+            "environments.update" -> EnvironmentRpcMethods.update(context, params)
+            "environments.delete" -> EnvironmentRpcMethods.delete(context, params)
+
+            // Shared folders and Android SAF-backed external mounts.
+            "storage.shared.list" -> StorageRpcMethods.sharedList()
+            "storage.mounts.list" -> StorageRpcMethods.mountsList(context)
+            "storage.mounts.rename" -> StorageRpcMethods.mountsRename(context, params)
+            "storage.mounts.setWritable" -> StorageRpcMethods.mountsSetWritable(context, params)
+            "storage.mounts.remove" -> StorageRpcMethods.mountsRemove(context, params)
 
             // Scheduled Tasks
             "scheduled.list" -> ScheduledTaskRpcMethods.list(context)

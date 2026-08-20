@@ -1367,7 +1367,7 @@ class RemoteAccessServer(
     private val RPC_ALLOWED_PREFIXES = arrayOf(
         "provider.", "chat.", "rpc.discover",
         "skills.", "memory.", "soul.",
-        "mcp.", "scheduled.",
+        "mcp.", "scheduled.", "environments.", "storage.",
         "agent.",
         "settings.",
         "debug.logs.", "debug.crash.", "debug.appInfo"

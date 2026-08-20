@@ -7,8 +7,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * `skills.*` RPC handlers for the Web Remote frontend.
- * Read-only listing plus toggle/delete — creation and import stay on-device.
+ * `skills.*` RPC handlers shared by the debug server and Web Remote.
+ * Mutations deliberately go through [SkillRepository], the same source of
+ * truth as Settings, so Web edits are visible to native chat immediately.
  */
 internal object SkillRpcMethods {
 
@@ -56,6 +57,42 @@ internal object SkillRpcMethods {
         }
     }
 
+    fun create(context: Context, params: JSONObject): JSONObject {
+        val name = params.optString("name", "").trim().ifEmpty {
+            throw RPCException(-32602, "Missing 'name' param")
+        }
+        val body = params.optString("body", "")
+        val description = params.optString("description", "").trim()
+        val version = params.optString("version", "1.0.0").trim().ifEmpty { "1.0.0" }
+        val skill = repo(context).add(
+            name = name,
+            description = description,
+            body = body,
+            version = version,
+            source = SkillRepository.ImportSource.FILE,
+        ) ?: throw RPCException(-32602, "A skill with this name already exists or the name is invalid")
+        return JSONObject().put("skill", skillToJson(skill, includeBody = true))
+    }
+
+    fun update(context: Context, params: JSONObject): JSONObject {
+        val skillId = params.optString("skillId", "").ifEmpty {
+            throw RPCException(-32602, "Missing 'skillId' param")
+        }
+        val r = repo(context)
+        val current = r.skills.value.find { it.id == skillId }
+            ?: throw RPCException(-32602, "Skill not found: $skillId")
+        val name = if (params.has("name")) params.optString("name").trim().ifEmpty {
+            throw RPCException(-32602, "Skill name cannot be empty")
+        } else null
+        val description = if (params.has("description")) params.optString("description") else null
+        val body = if (params.has("body")) params.optString("body") else null
+        if (!r.update(skillId, name = name, description = description, body = body)) {
+            throw RPCException(-32000, "Failed to update skill: $skillId")
+        }
+        val updated = r.skills.value.find { it.id == skillId } ?: current
+        return JSONObject().put("skill", skillToJson(updated, includeBody = true))
+    }
+
     fun toggle(context: Context, params: JSONObject): JSONObject {
         val skillId = params.optString("skillId", "").ifEmpty {
             throw RPCException(-32602, "Missing 'skillId' param")
@@ -83,4 +120,18 @@ internal object SkillRpcMethods {
         r.delete(skillId)
         return JSONObject().put("ok", true)
     }
+
+    private fun skillToJson(skill: SkillRepository.Skill, includeBody: Boolean): JSONObject =
+        JSONObject().apply {
+            put("id", skill.id)
+            put("name", skill.name)
+            put("description", skill.description)
+            put("version", skill.version)
+            put("importSource", skill.importSource.value)
+            put("isEnabled", skill.isEnabled)
+            put("installedAt", skill.installedAt)
+            put("updatedAt", skill.updatedAt)
+            put("useCount", skill.useCount)
+            if (includeBody) put("body", skill.body)
+        }
 }
