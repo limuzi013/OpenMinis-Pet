@@ -16,13 +16,13 @@
 
 - 版本：`1.12-pet.11-SNAPSHOT`（versionCode 31）
 - 架构：`arm64-v8a`
-- 大小：`51,563,132` bytes
-- SHA-256：`3dcc514ebded6f7d706b9d7e703ca0bc28002880e4ad8e247e6dba8cb1fb145f`
+- 大小：`51,600,188` bytes
+- SHA-256：`9b58bb09b617eb1d6722f4afb30fa797017f2958eb713cc17231f4f5b2c891cf`
 - 签名：debug keystore，仅供开发、自测和源码对应验证
 
 下载后可用 `adb install -r OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk` 安装。这个 APK
-对应下面所述的 Harness 风格 Web Remote 事件流工作台；后续快照如更换二进制，会同步更新
-文件名、字节数和校验值。
+对应下面所述的 Harness 风格事件流工作台、完整 Web 设置管理、默认数字助手修复和桌面宠物
+P0 迭代；后续快照如更换二进制，会同步更新文件名、字节数和校验值。
 
 ## 和官方版的关系
 
@@ -103,6 +103,8 @@ App 可以申请 Android 标准的 `ROLE_ASSISTANT`。设为系统默认助手�
 手势或 ROM 提供的助手入口会通过 `VoiceInteractionSession` 把现有 OpenMinis 任务拉到前台。
 声明中包含真实的 Session 与 Recognition 服务；识别桥会复用设备已有的系统 ASR，并避免递归
 调用自己。部分 ROM 仍只允许用户在系统设置页手动选择，App 不会也不能静默抢占默认助手。
+本次发布已在 Android 16 / API 36 小米设备上完成实机验证：系统成功绑定 OpenMinis 的会话与
+识别服务，助手按键可以拉起 App，触发后无崩溃。
 
 ### 三、编码可靠性增强
 

@@ -82,7 +82,9 @@ class AssistRecognitionService : RecognitionService() {
             className = AssistRecognitionService::class.java.name,
         )
         val configured = runCatching {
-            Settings.Secure.getString(contentResolver, Settings.Secure.VOICE_RECOGNITION_SERVICE)
+            // The framework reads this stable secure-setting key internally,
+            // but does not expose a public SDK constant for it.
+            Settings.Secure.getString(contentResolver, "voice_recognition_service")
         }.getOrNull()?.let(ComponentName::unflattenFromString)?.let {
             RecognitionDelegateSelector.Component(it.packageName, it.className)
         }

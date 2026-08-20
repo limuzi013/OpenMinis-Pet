@@ -32,6 +32,7 @@ It is a development/debug-signed artifact rather than a production Play release.
 ### Android assistant and desktop pet
 
 - The default-assistant declaration now uses the standard `RoleManager.ROLE_ASSISTANT`, a complete VoiceInteraction Session/Recognition contract, and an `ACTION_ASSIST` fallback. OEM role policy may still require a manual selection in system settings.
+- On an Android 16 / API 36 Xiaomi device, the final APK was installed and selected as the Assistant Role holder; the system bound both OpenMinis voice-interaction services, and the hardware Assist event opened OpenMinis without a fatal exception.
 - The floating pet now retries after overlay-permission return, clamps restored positions against the actual sprite size, invalidates stale asynchronous sprite loads, persists drag/snap positions, restores the current Agent state, and keeps failed/cancelled pet questions truthful in chat history.
 
 ## Build status
@@ -40,9 +41,9 @@ Verified debug build: `OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`
 
 - Variant: `debug` (debug keystore; development/self-test only)
 - ABI: `arm64-v8a`
-- Size: `51,563,132` bytes
-- SHA-256: `3dcc514ebded6f7d706b9d7e703ca0bc28002880e4ad8e247e6dba8cb1fb145f`
+- Size: `51,600,188` bytes
+- SHA-256: `9b58bb09b617eb1d6722f4afb30fa797017f2958eb713cc17231f4f5b2c891cf`
 - Repository path: [`releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk)
 
-Built with `./gradlew :app:assembleDebug --no-daemon` after the WebSocket event-log and
-tool-trajectory regression tests passed.
+Built with `./gradlew :app:assembleDebug --no-daemon` after the WebSocket event-log,
+tool-trajectory, default-assistant selector, and pet overlay geometry/state regression tests passed.

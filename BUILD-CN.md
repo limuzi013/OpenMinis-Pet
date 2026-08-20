@@ -17,12 +17,12 @@
 
 ## 已验证
 
-2026-08-20 在 WSL2 Ubuntu 上完整编译通过，产出 51 MB 的 debug APK。
+2026-08-21 在 WSL2 Ubuntu 上完整编译与关键 JVM 回归测试通过，产出 51 MB 的 debug APK。
 
 仓库同时提供这次验证通过的预构建包：
 [`releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk)。
 它只支持 `arm64-v8a`，使用 debug 签名；SHA-256 为
-`3dcc514ebded6f7d706b9d7e703ca0bc28002880e4ad8e247e6dba8cb1fb145f`。
+`9b58bb09b617eb1d6722f4afb30fa797017f2958eb713cc17231f4f5b2c891cf`（`51,600,188` bytes）。
 
 环境：JDK 17（Temurin）、Android SDK Platform 36、Build-Tools 36.0.0、NDK 28.0.13004108、CMake 3.22.1、只构建 `arm64-v8a`。
 
