@@ -19,6 +19,8 @@ It is a development/debug-signed artifact rather than a production Play release.
 
 - The workspace exposes the app's existing file, editor, and shell endpoints subject to the configured remote permission policy. Device-control Debug RPCs such as tap, text injection, screenshots, and arbitrary Debug-server file writes remain outside the Web Remote allowlist.
 - Skills, memory/SOUL, MCP, scheduled-task, and settings surfaces are backed by the App's existing allowed RPC groups. Their availability depends on the corresponding native subsystem and permission policy.
+- Provider instances, write-only API credentials, custom models, Skills and MCP servers now have real create/edit/delete flows in the Web control center. Environment-variable values are also write-only: Web can replace or clear them, while list responses expose only `hasValue`.
+- The storage surface exposes the fixed shared folders and already-authorized external mounts. Existing mounts can be renamed, made read-only/read-write, opened, or removed. Creating a mount still requires the Android SAF picker and is intentionally not faked by Web.
 - The workbench may show items already registered by the App, but it is **not** a completed, general-purpose persistent background-job platform. In particular, these notes do not claim a fully functioning `JobRegistry` or generic `job_output` / `job_list` / `job_kill` workflow.
 
 ### Security and packaging
@@ -26,6 +28,11 @@ It is a development/debug-signed artifact rather than a production Play release.
 - Web Remote authentication and the RPC allowlist remain the authority for remote access; exposing a device through a tunnel requires a strong configured password.
 - The app remains an Android-only, arm64-v8a OpenMinis fork with application id `dev.openminispet.android`, so it can coexist with the upstream application.
 - This branch is GPL-3.0 as an OpenMinis derivative. Third-party notices, including the DeepSeek Harness MIT notice and DeepSeek theme BSD-3 notice, are in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+### Android assistant and desktop pet
+
+- The default-assistant declaration now uses the standard `RoleManager.ROLE_ASSISTANT`, a complete VoiceInteraction Session/Recognition contract, and an `ACTION_ASSIST` fallback. OEM role policy may still require a manual selection in system settings.
+- The floating pet now retries after overlay-permission return, clamps restored positions against the actual sprite size, invalidates stale asynchronous sprite loads, persists drag/snap positions, restores the current Agent state, and keeps failed/cancelled pet questions truthful in chat history.
 
 ## Build status
 

@@ -92,13 +92,22 @@ Remote 优先使用与 Harness 相同的核心命名：
 | Workspace | `/api/files`, `/api/file`, `/api/edit`, `/api/shell` | 文件浏览、编辑和 shell；写入受 session 路径与远程权限预设约束。 |
 | 管理 RPC | `POST /api/rpc` | 经过明确 allowlist 的 native Debug RPC 适配，不是通用 Debug RPC 代理。 |
 
+控制中心当前使用的写能力包括：`provider.instances.*`、`provider.models.*`、
+`skills.create/update/toggle/delete`、`mcp.create/update/import/toggle/delete`、
+`environments.create/update/delete` 与 `storage.mounts.rename/setWritable/remove`。Provider API Key
+和环境变量值都是只写字段：读取接口只返回 `hasCredential` / `hasValue`，不会导出秘密。
+
+`storage.shared.list` 返回 `/var/minis/shared`、`/var/minis/skills`、`/var/minis/memory`；
+`storage.mounts.list` 返回手机已经通过 SAF 授权的外部目录。新授权必须发生在 Android 系统
+目录选择器中，因此 Web 只显示「在手机中添加」引导，不提供虚假的新增 RPC。
+
 ## 6. RPC allowlist
 
 当前 allowlist 覆盖：
 
 ```text
 provider.  chat.  rpc.discover
-skills.  memory.  soul.  mcp.  scheduled.
+skills.  memory.  soul.  mcp.  scheduled.  environments.  storage.
 agent.  settings.
 debug.logs.  debug.crash.  debug.appInfo
 ```

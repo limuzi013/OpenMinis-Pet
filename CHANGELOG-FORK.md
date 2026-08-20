@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-08-21：Web/App 管理能力对齐、数字助手与宠物 P0
+
+- Web 控制中心接通 Provider、API Key、模型、技能、MCP、环境变量的真实增删改；会话模型与
+  思考强度继续写入共享 `ChatViewModel`，失败明确显示，不再用只读卡片冒充可管理能力；
+- 加入共享目录与已有 SAF 外部挂载清单/管理。新增系统目录权限仍由手机原生选择器完成；
+- 修复记忆文件行被通用 `span` 样式挤成窄列的问题，并为记忆/SOUL/编辑器建立稳定响应式网格；
+- 默认数字助手改用标准 `RoleManager.ROLE_ASSISTANT`，补齐 VoiceInteraction Session、
+  Recognition bridge、正确 bind permission 与 `ACTION_ASSIST` 入口；
+- 桌面宠物补齐授权返回恢复、异步加载代际保护、位置/吸边持久化、屏幕边界限制和真实 Agent
+  状态恢复；宠物提问在网络调用前写入历史，失败/取消不再伪装成没有发生。
+
+---
+
 ## 2026-08-21：Harness RC8 source-adapted Web 工作台与事件流
 
 - 以本地官方 DeepSeek Harness `0.1.0-rc.8` 的 **MIT 源码**为信息架构、会话事件与

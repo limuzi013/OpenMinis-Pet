@@ -61,6 +61,20 @@
     workspaceShell: '',
     controlView: 'models',
     controlCache: {},
+    controlForms: {
+      providerCreate: false,
+      providerEditId: null,
+      modelCreateInstanceId: null,
+      modelEditId: null,
+      skillCreate: false,
+      skillEditId: null,
+      mcpCreate: false,
+      mcpEditId: null,
+      mcpImport: false,
+      environmentCreate: false,
+      environmentEditId: null,
+      mountEditId: null,
+    },
     feedback: new Map(),
     searchTimer: null,
   };
@@ -2060,44 +2074,216 @@
     if (state.controlView === 'skills') return renderControlSkills();
     if (state.controlView === 'memory') return renderControlMemory();
     if (state.controlView === 'mcp') return renderControlMcp();
+    if (state.controlView === 'environment') return renderControlEnvironment();
     if (state.controlView === 'scheduled') return renderControlScheduled();
     return renderControlSettings();
   }
 
+  function providerTypeOptions(types, selected) {
+    return (types || []).map((type) => '<option value="' + esc(type.id) + '"' + (type.id === selected ? ' selected' : '') + '>' + esc(type.displayName || type.id) + '</option>').join('');
+  }
+
+  function providerTextField(form, name) {
+    const field = $('[data-provider-field="' + name + '"]', form);
+    return field ? field.value.trim() : '';
+  }
+
+  function providerNumberField(form, name) {
+    const raw = providerTextField(form, name);
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
+  }
+
+  function providerChecked(form, name) {
+    const field = $('[data-provider-field="' + name + '"]', form);
+    return !!(field && field.checked);
+  }
+
+  function providerInstanceForm(instance, types) {
+    const creating = !instance;
+    const data = instance || { providerType: (types[0] && types[0].id) || 'openAI', credentialType: 'apiKey', appendV1Suffix: true, isEnabled: true };
+    const title = creating ? '添加供应商' : '编辑供应商';
+    const authName = data.credentialType === 'oauth' ? 'OAuth Token' : 'API Key';
+    return '<section class="control-card emphasis" data-provider-form="' + (creating ? 'create-instance' : 'update-instance') + '"' + (instance ? ' data-provider-instance="' + esc(instance.id) + '"' : '') + '>' +
+      '<div class="control-card-head"><strong>' + title + '</strong><small>密钥只写入手机端加密存储</small></div>' +
+      '<div class="control-form">' +
+        (creating ? '<label>供应商类型<select class="control-input control-select" data-provider-field="providerType">' + providerTypeOptions(types, data.providerType) + '</select></label>' : '<p class="control-note">类型：' + esc(data.providerType) + ' · 认证：' + esc(data.credentialType || 'apiKey') + '</p>') +
+        '<label>显示名称<input class="control-input" data-provider-field="label" value="' + esc(data.label || '') + '" placeholder="例如 DeepSeek API"></label>' +
+        '<label>自定义 Base URL（仅 OpenAI 兼容供应商）<input class="control-input" data-provider-field="customBaseURL" value="' + esc(data.customBaseURL || '') + '" placeholder="https://api.example.com"></label>' +
+        '<label>' + authName + '<input type="password" autocomplete="new-password" class="control-input" data-provider-field="secret" placeholder="' + (creating ? '写入加密存储' : '留空则保持原值') + '"></label>' +
+        (creating ? '<label>认证方式<select class="control-input control-select" data-provider-field="credentialType"><option value="apiKey"' + (data.credentialType !== 'oauth' ? ' selected' : '') + '>API Key</option><option value="oauth"' + (data.credentialType === 'oauth' ? ' selected' : '') + '>OAuth Token</option></select></label>' : '<label class="control-inline"><input type="checkbox" data-provider-field="clearSecret">清除已保存的 ' + authName + '</label>') +
+        '<div class="form-row"><label class="control-inline"><input type="checkbox" data-provider-field="appendV1Suffix"' + (data.appendV1Suffix !== false ? ' checked' : '') + '>Base URL 自动附加 /v1</label><label class="control-inline"><input type="checkbox" data-provider-field="useResponsesAPI"' + (data.useResponsesAPI ? ' checked' : '') + '>使用 Responses API</label></div>' +
+        '<label class="control-inline"><input type="checkbox" data-provider-field="isEnabled"' + (data.isEnabled !== false ? ' checked' : '') + '>启用此供应商</label>' +
+      '</div><div class="control-card-actions provider-form-actions"><button class="button button-primary" data-provider-action="' + (creating ? 'create-instance' : 'save-instance') + '">' + (creating ? '添加供应商' : '保存修改') + '</button><button class="button button-secondary" data-provider-action="cancel-provider-form">取消</button></div></section>';
+  }
+
+  function providerModelEditor(instance, entry) {
+    const creating = !entry;
+    const data = entry || { modelId: '', displayName: '', supportsReasoning: false, contextWindow: '', maxOutputTokens: '' };
+    return '<section class="control-card emphasis" data-provider-model-form="' + (creating ? 'create' : 'update') + '" data-provider-instance="' + esc(instance.id) + '"' + (entry ? ' data-provider-model-id="' + esc(entry.id) + '"' : '') + '><div class="control-card-head"><strong>' + (creating ? '添加模型到 ' : '编辑模型 · ') + esc(creating ? instance.label : data.displayName || data.modelId) + '</strong></div><div class="control-form">' +
+      '<label>模型 ID<input class="control-input" data-provider-model-field="modelId" value="' + esc(data.modelId || '') + '"' + (!creating && !data.isCustom ? ' disabled' : '') + ' placeholder="例如 deepseek-chat"></label>' +
+      '<label>显示名称<input class="control-input" data-provider-model-field="displayName" value="' + esc(data.displayName || '') + '" placeholder="留空使用默认名称"></label>' +
+      '<div class="form-row"><label>上下文窗口<input type="number" min="1" class="control-input" data-provider-model-field="contextWindow" value="' + esc(data.contextWindow || '') + '" placeholder="可选"></label><label>最大输出<input type="number" min="1" class="control-input" data-provider-model-field="maxOutputTokens" value="' + esc(data.maxOutputTokens || '') + '" placeholder="可选"></label></div>' +
+      (creating ? '<label class="control-inline"><input type="checkbox" data-provider-model-field="supportsReasoning"' + (data.supportsReasoning ? ' checked' : '') + '>支持思考</label>' : '<p class="control-note">留空数字字段会清除该覆盖值；内置模型无法修改其 API 模型 ID。</p>') +
+      '</div><div class="control-card-actions provider-form-actions"><button class="button button-primary" data-provider-action="' + (creating ? 'create-model' : 'save-model') + '">' + (creating ? '添加模型' : '保存模型') + '</button><button class="button button-secondary" data-provider-action="cancel-model-form">取消</button></div></section>';
+  }
+
+  function providerModelRow(instance, entry) {
+    const reasoning = entry.supportsReasoning === true ? '思考' : '标准';
+    const meta = [entry.modelId, entry.isCustom ? '自定义' : '内置', entry.isHidden ? '已隐藏' : '可见'].filter(Boolean).join(' · ');
+    const editing = state.controlForms.modelEditId === entry.id;
+    return '<div class="provider-model-row"><div class="control-list-row"><div><strong>' + esc(entry.displayName || entry.modelId || entry.id) + '</strong><span>' + esc(meta) + '</span></div><span class="control-pill' + (entry.supportsReasoning === true ? ' ok' : '') + '">' + reasoning + '</span><div class="control-card-actions"><button class="button button-secondary" data-provider-action="edit-model" data-provider-model-id="' + esc(entry.id) + '">编辑</button><button class="button button-secondary" data-provider-action="toggle-model-hidden" data-provider-model-id="' + esc(entry.id) + '">' + (entry.isHidden ? '显示' : '隐藏') + '</button>' + (entry.isCustom ? '<button class="button button-secondary button-danger" data-provider-action="delete-model" data-provider-model-id="' + esc(entry.id) + '">删除</button>' : '') + '</div></div>' + (editing ? providerModelEditor(instance, entry) : '') + '</div>';
+  }
+
+  function providerInstanceCard(instance, entries, types) {
+    const editing = state.controlForms.providerEditId === instance.id;
+    const addingModel = state.controlForms.modelCreateInstanceId === instance.id;
+    const enabled = instance.isEnabled !== false;
+    const meta = [instance.providerType, instance.hasCredential ? '已配置密钥' : '未配置密钥', (entries || []).length + ' 个模型'].join(' · ');
+    return '<section class="control-card" data-provider-instance="' + esc(instance.id) + '"><div class="control-card-head"><strong>' + esc(instance.label || instance.id) + '</strong><span class="control-pill ' + (enabled ? 'ok' : 'off') + '">' + (enabled ? '已启用' : '已停用') + '</span></div><p>' + esc(meta) + '</p>' +
+      '<div class="control-card-actions"><button class="button button-secondary" data-provider-action="edit-instance">编辑</button><button class="button button-secondary" data-provider-action="test-instance">连接测试</button><button class="button button-secondary" data-provider-action="refresh-models">刷新模型</button><button class="button button-secondary" data-provider-action="toggle-instance">' + (enabled ? '停用' : '启用') + '</button><button class="button button-secondary button-danger" data-provider-action="delete-instance">删除</button></div>' +
+      (editing ? providerInstanceForm(instance, types) : '') +
+      '<details class="provider-models"><summary>模型目录（' + (entries || []).length + '）</summary><div class="control-card-actions provider-form-actions"><button class="button button-secondary" data-provider-action="show-create-model">添加模型</button></div>' + (addingModel ? providerModelEditor(instance, null) : '') + ((entries || []).map((entry) => providerModelRow(instance, entry)).join('') || '<p class="control-note">没有模型；添加一个自定义模型或刷新远端目录。</p>') + '</details></section>';
+  }
+
   async function renderControlModels() {
-    const response = await api('/api/models');
-    state.controlCache.models = response;
-    const entries = response.entries || [];
-    const groups = response.groups || [];
-    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('模型与 Agent', '模型目录、路由组和当前会话绑定均来自手机端配置。') +
-      '<div class="control-grid"><section class="control-card"><div class="control-card-head"><strong>当前会话模型</strong><button class="button button-secondary" data-control-action="open-model">在输入框中选择</button></div><p>' + esc((state.status && state.status.modelName) || '选择会话后显示') + ' · 思考 ' + esc(thinkingLabel(state.thinkingLevel)) + '</p></section>' +
-      '<section class="control-card"><div class="control-card-head"><strong>可用模型</strong><small>' + entries.length + ' 个</small></div><div>' + entries.map((entry) => '<div class="control-list-row"><div><strong>' + esc(entry.modelName || entry.id) + '</strong><span>' + esc((entry.providerInstanceName || entry.providerType || '') + ' · ' + (entry.modelId || '')) + '</span></div><span class="control-pill' + (entry.supportsReasoning ? ' ok' : '') + '">' + (entry.supportsReasoning ? '思考' : '标准') + '</span></div>').join('') + '</div></section>' +
-      '<section class="control-card"><div class="control-card-head"><strong>路由组</strong><small>' + groups.length + ' 个</small></div><div>' + groups.map((group) => '<div class="control-list-row"><div><strong>' + esc(group.name || group.id) + '</strong><span>' + esc(group.strategy || '') + ' · ' + ((group.memberEntryIds || []).length) + ' 个成员</span></div><span class="control-pill' + (group.isDefault ? ' ok' : '') + '">' + (group.isDefault ? '默认' : '组') + '</span></div>').join('') + '</div></section></div></div>';
+    const results = await Promise.all([
+      rpc('provider.types'),
+      rpc('provider.instances.list', { includeDisabled: true }),
+      rpc('provider.groups.list', { includeMembers: true }),
+    ]);
+    const types = results[0].types || [];
+    const instances = results[1].instances || [];
+    const groups = results[2].groups || [];
+    const modelResponses = await Promise.all(instances.map((instance) => rpc('provider.models.list', { instanceId: instance.id, includeHidden: true }).catch(() => ({ entries: [] }))));
+    const entriesByInstance = {};
+    instances.forEach((instance, index) => { entriesByInstance[instance.id] = modelResponses[index].entries || []; });
+    state.controlCache.providers = { types, instances, groups, entriesByInstance };
+    const currentModel = (state.status && state.status.modelName) || '选择会话后显示';
+    const hasSession = !!state.sessionId;
+    const groupRows = groups.length ? groups.map((group) => '<div class="control-list-row" data-provider-group-id="' + esc(group.id) + '"><div><strong>' + esc(group.name || group.id) + '</strong><span>' + esc(group.strategy || 'fallback') + ' · ' + ((group.memberEntryIds || []).length) + ' 个成员</span></div><span class="control-pill' + (group.isDefault ? ' ok' : '') + '">' + (group.isDefault ? '主默认' : group.isSub ? '子默认' : '组') + '</span><div class="control-card-actions"><button class="button button-secondary" data-provider-action="set-default-group">设为主默认</button><button class="button button-secondary" data-provider-action="set-subdefault-group">设为子默认</button></div></div>').join('') : '<p class="control-note">还没有路由组。模型可以直接绑定到会话。</p>';
+    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('模型、供应商与 Agent', '所有写入都进入 Android 的 ProviderRepository；API Key 永远不会回传到浏览器。') + '<div class="control-grid provider-cards">' +
+      '<section class="control-card"><div class="control-card-head"><strong>当前会话</strong><button class="button button-secondary" data-control-action="open-model"' + (hasSession ? '' : ' disabled') + '>选择模型</button></div><p>' + esc(currentModel) + ' · 当前思考强度：' + esc(thinkingLabel(state.thinkingLevel)) + '</p>' + (hasSession ? '<div class="control-form"><label>思考强度<select id="controlThinking" class="control-input control-select">' + THINKING_LEVELS.map((item) => '<option value="' + item[0] + '"' + (state.thinkingLevel === item[0] ? ' selected' : '') + '>' + esc(item[1]) + '</option>').join('') + '</select></label></div><div class="control-card-actions"><button class="button button-secondary" data-provider-action="apply-thinking">应用到当前会话</button></div>' : '<p class="control-note">先新建或选择一个会话，模型和思考强度才会写入手机端会话状态。</p>') + '</section>' +
+      '<section class="control-card"><div class="control-card-head"><strong>供应商</strong><button class="button button-primary" data-provider-action="show-create-instance">添加供应商</button></div><p>支持完整的创建、编辑、启停、测试、刷新与删除。</p></section>' +
+      (state.controlForms.providerCreate ? providerInstanceForm(null, types) : '') +
+      (instances.map((instance) => providerInstanceCard(instance, entriesByInstance[instance.id], types)).join('') || '<section class="control-card"><p>尚未配置供应商。添加后可立即新增或刷新模型目录。</p></section>') +
+      '<section class="control-card"><div class="control-card-head"><strong>路由组</strong><small>' + groups.length + ' 个</small></div>' + groupRows + '</section>' +
+      '</div></div>';
+  }
+
+  function skillEditor(skill) {
+    const creating = !skill;
+    const data = skill || { name: '', description: '', body: '', version: '1.0.0' };
+    return '<section class="control-card emphasis" data-skill-form="' + (creating ? 'create' : 'update') + '"' + (skill ? ' data-skill-id="' + esc(skill.id) + '"' : '') + '><div class="control-card-head"><strong>' + (creating ? '新建技能' : '编辑技能') + '</strong><small>与手机端技能仓库实时同步</small></div><div class="control-form"><label>名称<input class="control-input" data-skill-field="name" value="' + esc(data.name || '') + '" placeholder="例如 project-review"></label><label>说明<input class="control-input" data-skill-field="description" value="' + esc(data.description || '') + '" placeholder="说明该技能何时使用"></label>' + (creating ? '<label>版本<input class="control-input" data-skill-field="version" value="' + esc(data.version || '1.0.0') + '"></label>' : '<p class="control-note">版本由安装来源管理；网页编辑不会改写它。</p>') + '<label>SKILL.md 内容<textarea class="control-textarea" data-skill-field="body" placeholder="写入技能说明和步骤…">' + esc(data.body || '') + '</textarea></label></div><div class="control-card-actions provider-form-actions"><button class="button button-primary" data-skill-action="' + (creating ? 'create' : 'save') + '">' + (creating ? '创建技能' : '保存技能') + '</button><button class="button button-secondary" data-skill-action="cancel">取消</button></div></section>';
+  }
+
+  function skillCard(skill) {
+    const enabled = skill.isEnabled !== false;
+    const editing = state.controlForms.skillEditId === skill.id;
+    const meta = [skill.version ? 'v' + skill.version : '', '使用 ' + (skill.useCount || 0) + ' 次'].filter(Boolean).join(' · ');
+    return '<section class="control-card" data-managed-kind="skill" data-managed-id="' + esc(skill.id) + '" data-managed-enabled="' + String(enabled) + '"><div class="control-card-head"><strong>' + esc(skill.name || skill.id) + '</strong><span class="control-pill ' + (enabled ? 'ok' : 'off') + '">' + (enabled ? '已启用' : '已停用') + '</span></div><p>' + esc(skill.description || meta || '无描述') + '</p><p class="control-note">' + esc(meta) + '</p><div class="control-card-actions"><button class="button button-secondary" data-skill-action="edit">编辑</button><button class="button button-secondary" data-managed-action="detail">查看内容</button><button class="button button-secondary" data-managed-action="toggle">' + (enabled ? '停用' : '启用') + '</button><button class="button button-secondary button-danger" data-managed-action="delete">删除</button></div><pre class="hidden" data-managed-detail></pre>' + (editing ? skillEditor(skill) : '') + '</section>';
   }
 
   async function renderControlSkills() {
     const response = await rpc('skills.list');
     const skills = response.skills || response.items || [];
+    const details = state.controlCache.skillDetails || {};
+    skills.forEach((skill) => { if (details[skill.id]) Object.assign(skill, details[skill.id]); });
     state.controlCache.skills = skills;
-    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('技能', '安装、启停和删除直接作用于手机上的技能仓库。') + '<div class="control-grid">' +
-      (skills.length ? skills.map((skill) => controlManagedCard('skill', skill.id, skill.name || skill.id, skill.description || '', skill.isEnabled !== false, [skill.version ? 'v' + skill.version : '', '使用 ' + (skill.useCount || 0) + ' 次'].filter(Boolean).join(' · '))).join('') : '<div class="control-card"><p>还没有安装技能。请在手机 App 中导入技能包。</p></div>') +
+    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('技能', '创建、编辑、启停和删除都直接写入手机端的技能仓库。') + '<div class="control-grid">' +
+      '<section class="control-card"><div class="control-card-head"><strong>本地技能</strong><button class="button button-primary" data-skill-action="show-create">新建技能</button></div><p>Web 与 App 使用同一份技能数据；保存后下一个 Agent 回合即可使用。</p></section>' +
+      (state.controlForms.skillCreate ? skillEditor(null) : '') +
+      (skills.map(skillCard).join('') || '<section class="control-card"><p>还没有安装技能。现在可以从这里新建一个。</p></section>') +
       '</div></div>';
+  }
+
+  function mapToLines(value) {
+    return Object.keys(value || {}).map((key) => key + '=' + value[key]).join('\n');
+  }
+
+  function mcpEditor(server) {
+    const creating = !server;
+    const data = server || { id: '', note: '', enabled: true, url: '', command: '', args: [], env: {}, headers: {}, startupTimeoutSeconds: 30 };
+    return '<section class="control-card emphasis" data-mcp-form="' + (creating ? 'create' : 'update') + '"' + (server ? ' data-mcp-server-id="' + esc(server.id) + '"' : '') + '><div class="control-card-head"><strong>' + (creating ? '添加 MCP 服务器' : '编辑 MCP 服务器') + '</strong><small>HTTP/SSE 与 STDIO 二选一</small></div><div class="control-form">' +
+      (creating ? '<label>服务器 ID<input class="control-input" data-mcp-field="id" value="' + esc(data.id || '') + '" placeholder="例如 github"></label>' : '<p class="control-note">服务器 ID：' + esc(data.id) + '</p>') +
+      '<label>备注<input class="control-input" data-mcp-field="note" value="' + esc(data.note || '') + '" placeholder="给人看的说明"></label>' +
+      '<label>HTTP/SSE URL<input class="control-input" data-mcp-field="url" value="' + esc(data.url || '') + '" placeholder="https://…/mcp"></label>' +
+      '<label>或 STDIO 命令<input class="control-input" data-mcp-field="command" value="' + esc(data.command || '') + '" placeholder="npx 或可执行文件路径"></label>' +
+      '<label>STDIO 参数（每行一个）<textarea class="control-textarea" data-mcp-field="args" placeholder="-y\n@modelcontextprotocol/server-github">' + esc((data.args || []).join('\n')) + '</textarea></label>' +
+      '<div class="form-row"><label>环境变量（KEY=VALUE，每行一个）<textarea class="control-textarea" data-mcp-field="env">' + esc(mapToLines(data.env)) + '</textarea></label><label>请求头（KEY=VALUE，每行一个）<textarea class="control-textarea" data-mcp-field="headers">' + esc(mapToLines(data.headers)) + '</textarea></label></div>' +
+      '<div class="form-row"><label>启动超时（秒）<input type="number" min="1" class="control-input" data-mcp-field="timeout" value="' + esc(data.startupTimeoutSeconds || '') + '" placeholder="可选"></label><label class="control-inline"><input type="checkbox" data-mcp-field="enabled"' + (data.enabled !== false ? ' checked' : '') + '>启用此服务器</label></div>' +
+      '</div><div class="control-card-actions provider-form-actions"><button class="button button-primary" data-mcp-action="' + (creating ? 'create' : 'save') + '">' + (creating ? '添加服务器' : '保存服务器') + '</button><button class="button button-secondary" data-mcp-action="cancel">取消</button></div></section>';
+  }
+
+  function mcpCard(server) {
+    const enabled = server.enabled !== false;
+    const editing = state.controlForms.mcpEditId === server.id;
+    const meta = [server.url ? 'HTTP/SSE' : 'STDIO', server.note || '', server.url || server.command || ''].filter(Boolean).join(' · ');
+    return '<section class="control-card" data-managed-kind="mcp" data-managed-id="' + esc(server.id) + '" data-managed-enabled="' + String(enabled) + '"><div class="control-card-head"><strong>' + esc(server.id) + '</strong><span class="control-pill ' + (enabled ? 'ok' : 'off') + '">' + (enabled ? '已启用' : '已停用') + '</span></div><p>' + esc(meta || '未配置传输') + '</p><div class="control-card-actions"><button class="button button-secondary" data-mcp-action="edit">编辑</button><button class="button button-secondary" data-managed-action="detail">详情</button><button class="button button-secondary" data-managed-action="toggle">' + (enabled ? '停用' : '启用') + '</button><button class="button button-secondary button-danger" data-managed-action="delete">删除</button></div><pre class="hidden" data-managed-detail></pre>' + (editing ? mcpEditor(server) : '') + '</section>';
+  }
+
+  function mcpImportForm() {
+    return '<section class="control-card emphasis" data-mcp-import-form><div class="control-card-head"><strong>导入 MCP 配置</strong><small>使用 App 支持的 JSON 格式</small></div><div class="control-form"><label>配置 JSON<textarea class="control-textarea" data-mcp-import-json placeholder="粘贴 MCP 配置 JSON…"></textarea></label></div><div class="control-card-actions provider-form-actions"><button class="button button-primary" data-mcp-action="import">导入</button><button class="button button-secondary" data-mcp-action="cancel-import">取消</button></div></section>';
   }
 
   async function renderControlMcp() {
     const response = await rpc('mcp.list');
     const servers = response.servers || response.items || [];
     state.controlCache.mcp = servers;
-    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('MCP', '网页只显示安全元数据；密钥和环境变量值不会离开手机。') + '<div class="control-grid">' +
-      (servers.length ? servers.map((server) => {
-        const meta = [server.url ? 'HTTP/SSE' : 'STDIO', server.note || '', server.url || server.command || ''].filter(Boolean).join(' · ');
-        return controlManagedCard('mcp', server.id, server.id, meta, server.enabled !== false, '');
-      }).join('') : '<div class="control-card"><p>还没有配置 MCP 服务器。请在手机 App 中添加。</p></div>') +
+    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('MCP', '服务器配置、启停和删除会与手机端的 MCP 仓库同步。') + '<div class="control-grid">' +
+      '<section class="control-card"><div class="control-card-head"><strong>MCP 服务器</strong><div class="control-card-actions"><button class="button button-secondary" data-mcp-action="show-import">导入 JSON</button><button class="button button-primary" data-mcp-action="show-create">添加服务器</button></div></div><p>新建或编辑时，HTTP/SSE URL 与 STDIO 命令必须且只能填写一个。</p></section>' +
+      (state.controlForms.mcpCreate ? mcpEditor(null) : '') + (state.controlForms.mcpImport ? mcpImportForm() : '') +
+      (servers.map(mcpCard).join('') || '<section class="control-card"><p>还没有配置 MCP 服务器。可以在此添加、编辑或导入。</p></section>') +
       '</div></div>';
   }
 
   function controlManagedCard(kind, id, title, description, enabled, meta) {
     return '<section class="control-card" data-managed-kind="' + esc(kind) + '" data-managed-id="' + esc(id) + '" data-managed-enabled="' + String(enabled) + '"><div class="control-card-head"><strong>' + esc(title) + '</strong><span class="control-pill ' + (enabled ? 'ok' : 'off') + '">' + (enabled ? '已启用' : '已停用') + '</span></div><p>' + esc(description || meta || '无描述') + '</p><div class="control-card-actions"><button class="button button-secondary" data-managed-action="detail">详情</button><button class="button button-secondary" data-managed-action="toggle">' + (enabled ? '停用' : '启用') + '</button><button class="button button-secondary button-danger" data-managed-action="delete">删除</button></div><pre class="hidden" data-managed-detail></pre></section>';
+  }
+
+  function environmentEditor(entry) {
+    const creating = !entry;
+    const data = entry || { key: '', note: '', hasValue: false };
+    return '<section class="control-card emphasis" data-environment-form="' + (creating ? 'create' : 'update') + '"' + (entry ? ' data-environment-id="' + esc(entry.id) + '"' : '') + '><div class="control-card-head"><strong>' + (creating ? '新增环境变量' : '编辑环境变量') + '</strong><small>值只写入，永不从手机端回传</small></div><div class="control-form"><label>变量名<input class="control-input" data-environment-field="key" value="' + esc(data.key || '') + '" placeholder="例如 OPENAI_API_KEY"></label><label>说明<input class="control-input" data-environment-field="note" value="' + esc(data.note || '') + '" placeholder="可选"></label><label>值<input type="password" autocomplete="new-password" class="control-input" data-environment-field="value" placeholder="' + (creating ? '写入手机端加密存储' : '留空则保持原值') + '"></label>' + (!creating ? '<label class="control-inline"><input type="checkbox" data-environment-field="clearValue">清除当前值</label>' : '') + '</div><div class="control-card-actions provider-form-actions"><button class="button button-primary" data-environment-action="' + (creating ? 'create' : 'save') + '">' + (creating ? '添加变量' : '保存变量') + '</button><button class="button button-secondary" data-environment-action="cancel">取消</button></div></section>';
+  }
+
+  function environmentCard(entry) {
+    const editing = state.controlForms.environmentEditId === entry.id;
+    return '<section class="control-card" data-environment-id="' + esc(entry.id) + '"><div class="control-card-head"><strong>' + esc(entry.key) + '</strong><span class="control-pill ' + (entry.hasValue ? 'ok' : 'off') + '">' + (entry.hasValue ? '已设置值' : '空值') + '</span></div><p>' + esc(entry.note || '无说明') + '</p><p class="control-note">值受加密保护，列表与编辑页不会显示现有内容。</p><div class="control-card-actions"><button class="button button-secondary" data-environment-action="edit">编辑</button><button class="button button-secondary button-danger" data-environment-action="delete">删除</button></div>' + (editing ? environmentEditor(entry) : '') + '</section>';
+  }
+
+  function mountEditor(mount) {
+    return '<section class="control-card emphasis" data-mount-form data-mount-id="' + esc(mount.id) + '"><div class="control-card-head"><strong>编辑挂载 · ' + esc(mount.name) + '</strong></div><div class="control-form"><label>挂载名称<input class="control-input" data-mount-field="name" value="' + esc(mount.name || '') + '"></label><label class="control-inline"><input type="checkbox" data-mount-field="allowWrite"' + (mount.userAllowWrite ? ' checked' : '') + '>允许 Agent 写入此文件夹</label></div><div class="control-card-actions provider-form-actions"><button class="button button-primary" data-storage-action="save-mount">保存挂载</button><button class="button button-secondary" data-storage-action="cancel-mount">取消</button></div></section>';
+  }
+
+  function mountCard(mount) {
+    const editing = state.controlForms.mountEditId === mount.id;
+    const writable = mount.effectiveWritable === true;
+    const meta = [mount.sourceDisplayName || '', mount.path || ''].filter(Boolean).join(' · ');
+    return '<section class="control-card" data-storage-mount-id="' + esc(mount.id) + '"><div class="control-card-head"><strong>' + esc(mount.name || mount.id) + '</strong><span class="control-pill ' + (writable ? 'ok' : 'off') + '">' + (writable ? '可写' : '只读') + '</span></div><p>' + esc(meta) + '</p><p class="control-note">' + (mount.userAllowWrite ? '已允许写入；实际可写性仍受手机文件授权控制。' : '默认只读；可在这里为 Agent 开启写入。') + '</p><div class="control-card-actions"><button class="button button-secondary" data-storage-action="browse-mount">在工作区打开</button><button class="button button-secondary" data-storage-action="edit-mount">编辑</button><button class="button button-secondary button-danger" data-storage-action="remove-mount">移除</button></div>' + (editing ? mountEditor(mount) : '') + '</section>';
+  }
+
+  async function renderControlEnvironment() {
+    const results = await Promise.all([
+      rpc('environments.list'),
+      rpc('storage.shared.list'),
+      rpc('storage.mounts.list'),
+    ]);
+    const entries = results[0].entries || [];
+    const shared = results[1].folders || [];
+    const storage = results[2] || {};
+    const mounts = storage.mounts || [];
+    state.controlCache.environment = { entries, shared, storage, mounts };
+    const sharedRows = shared.map((folder) => '<div class="control-list-row" data-storage-path="' + esc(folder.path) + '"><div><strong>' + esc(folder.name || folder.id) + '</strong><span>' + esc(folder.path || '') + '</span></div><span class="control-pill' + (folder.writable ? ' ok' : ' off') + '">' + (folder.writable ? '可写' : '只读') + '</span><div class="control-card-actions"><button class="button button-secondary" data-storage-action="browse-path">打开</button></div></div>').join('') || '<p class="control-note">没有共享文件夹。</p>';
+    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('环境与挂载', '环境变量、共享目录和外部挂载均以手机端为唯一事实来源。') + '<div class="control-grid">' +
+      '<section class="control-card"><div class="control-card-head"><strong>环境变量</strong><button class="button button-primary" data-environment-action="show-create">新增变量</button></div><p>值只写入手机端加密存储。此处只能看到是否已设置，不能读取秘密内容。</p></section>' +
+      (state.controlForms.environmentCreate ? environmentEditor(null) : '') +
+      (entries.map(environmentCard).join('') || '<section class="control-card"><p>还没有环境变量。可以在这里安全创建。</p></section>') +
+      '<section class="control-card"><div class="control-card-head"><strong>共享文件夹</strong><small>' + shared.length + ' 个</small></div>' + sharedRows + '</section>' +
+      '<section class="control-card"><div class="control-card-head"><strong>外部挂载</strong><div class="control-card-actions"><button class="button button-secondary" data-storage-action="open-native-picker">在手机中添加</button></div></div><p>新增外部文件夹必须经过 Android 的 SAF 文件选择器授权；网页端不会伪造添加成功。</p><p class="control-note">已用 ' + mounts.length + ' / ' + (storage.capacity || '—') + ' 个挂载位。</p></section>' +
+      (mounts.map(mountCard).join('') || '<section class="control-card"><p>尚未挂载外部文件夹。点“在手机中添加”后在设备上完成授权。</p></section>') +
+      '</div></div>';
   }
 
   async function renderControlMemory() {
@@ -2110,11 +2296,11 @@
     const global = !!results[1].enabled;
     const soul = results[2] || {};
     state.controlCache.memory = { files, global, soul, current: null };
-    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('记忆与 SOUL', '这些设置与手机端 Agent 读取同一份记忆文件。') + '<div class="control-grid">' +
-      '<section class="control-card"><div class="control-card-head"><strong>全局记忆</strong><span class="control-pill ' + (global ? 'ok' : 'off') + '">' + (global ? '已启用' : '已停用') + '</span></div><p>控制所有会话是否读写记忆文件。</p><div class="control-card-actions"><button class="button button-secondary" data-memory-action="toggle">' + (global ? '停用' : '启用') + '</button></div></section>' +
-      '<section class="control-card"><div class="control-card-head"><strong>SOUL.md</strong></div><div class="control-form"><label>名称<input id="soulName" class="control-input" value="' + esc(soul.name || '') + '"></label><div class="form-row"><label>语言<input id="soulLang" class="control-input" value="' + esc(soul.lang || '') + '"></label><label>风格<input id="soulStyle" class="control-input" value="' + esc(soul.style || '') + '"></label></div><label>正文<textarea id="soulBody" class="control-textarea">' + esc(soul.body || '') + '</textarea></label></div><div class="control-card-actions"><button class="button button-primary" data-memory-action="save-soul">保存 SOUL.md</button></div></section>' +
-      '<section class="control-card"><div class="control-card-head"><strong>记忆文件</strong><small>' + files.length + ' 个</small></div><div id="memoryFileRows">' + files.map((file) => '<button class="control-list-row" data-memory-file="' + esc(file.name) + '"><span class="control-pill' + (file.isGlobal ? ' ok' : '') + '">' + (file.isGlobal ? '全局' : '会话') + '</span><div><strong>' + esc(file.name) + '</strong><span>' + esc(file.preview || '') + '</span></div></button>').join('') + '</div></section>' +
-      '<section class="control-card"><div class="control-card-head"><strong id="memoryEditTitle">选择一个记忆文件</strong></div><textarea id="memoryEditor" class="control-textarea" placeholder="选择上方文件后编辑…"></textarea><div class="control-card-actions"><button class="button button-secondary button-danger hidden" id="memoryDelete" data-memory-action="delete-file">删除</button><button class="button button-primary" data-memory-action="save-file">保存</button></div></section>' +
+    $('#controlContent').innerHTML = '<div class="control-page">' + controlHead('记忆与 SOUL', '这些设置与手机端 Agent 读取同一份记忆文件。') + '<div class="control-grid memory-control-grid">' +
+      '<section class="control-card memory-global-card"><div class="control-card-head"><strong>全局记忆</strong><span class="control-pill ' + (global ? 'ok' : 'off') + '">' + (global ? '已启用' : '已停用') + '</span></div><p>控制所有会话是否读写记忆文件。</p><div class="control-card-actions"><button class="button button-secondary" data-memory-action="toggle">' + (global ? '停用' : '启用') + '</button></div></section>' +
+      '<section class="control-card memory-soul-card"><div class="control-card-head"><strong>SOUL.md</strong></div><div class="control-form"><label>名称<input id="soulName" class="control-input" value="' + esc(soul.name || '') + '"></label><div class="form-row"><label>语言<input id="soulLang" class="control-input" value="' + esc(soul.lang || '') + '"></label><label>风格<input id="soulStyle" class="control-input" value="' + esc(soul.style || '') + '"></label></div><label>正文<textarea id="soulBody" class="control-textarea">' + esc(soul.body || '') + '</textarea></label></div><div class="control-card-actions"><button class="button button-primary" data-memory-action="save-soul">保存 SOUL.md</button></div></section>' +
+      '<section class="control-card memory-files-card"><div class="control-card-head"><strong>记忆文件</strong><small>' + files.length + ' 个</small></div><div id="memoryFileRows">' + files.map((file) => '<button class="control-list-row" data-memory-file="' + esc(file.name) + '"><span class="control-pill' + (file.isGlobal ? ' ok' : '') + '">' + (file.isGlobal ? '全局' : '会话') + '</span><div><strong>' + esc(file.name) + '</strong><span>' + esc(file.preview || '') + '</span></div></button>').join('') + '</div></section>' +
+      '<section class="control-card memory-editor-card"><div class="control-card-head"><strong id="memoryEditTitle">选择一个记忆文件</strong></div><textarea id="memoryEditor" class="control-textarea" placeholder="选择上方文件后编辑…"></textarea><div class="control-card-actions"><button class="button button-secondary button-danger hidden" id="memoryDelete" data-memory-action="delete-file">删除</button><button class="button button-primary" data-memory-action="save-file">保存</button></div></section>' +
       '</div></div>';
   }
 
@@ -2139,6 +2325,264 @@
       const permission = await rpc('settings.permissionPreset.get');
       $('#settingsPermission').value = permission.preset || 'workspace-write';
     } catch (_) {}
+  }
+
+  function cachedProviderModel(entryId) {
+    const byInstance = (state.controlCache.providers || {}).entriesByInstance || {};
+    return Object.keys(byInstance).reduce((found, key) => found || (byInstance[key] || []).find((entry) => entry.id === entryId), null);
+  }
+
+  async function handleProviderAction(button) {
+    const action = button.dataset.providerAction;
+    const instanceCard = button.closest('[data-provider-instance]');
+    const instanceId = instanceCard && instanceCard.dataset.providerInstance;
+    const forms = state.controlForms;
+    if (action === 'show-create-instance') { forms.providerCreate = true; forms.providerEditId = null; return renderControlModels(); }
+    if (action === 'cancel-provider-form') { forms.providerCreate = false; forms.providerEditId = null; return renderControlModels(); }
+    if (action === 'edit-instance') { forms.providerEditId = instanceId; forms.providerCreate = false; return renderControlModels(); }
+    if (action === 'show-create-model') { forms.modelCreateInstanceId = instanceId; forms.modelEditId = null; return renderControlModels(); }
+    if (action === 'cancel-model-form') { forms.modelCreateInstanceId = null; forms.modelEditId = null; return renderControlModels(); }
+    if (action === 'edit-model') { forms.modelEditId = button.dataset.providerModelId; forms.modelCreateInstanceId = null; return renderControlModels(); }
+    if (action === 'apply-thinking') {
+      await selectThinking($('#controlThinking').value);
+      toast('思考强度已写入当前会话');
+      return renderControlModels();
+    }
+    if (action === 'set-default-group' || action === 'set-subdefault-group') {
+      const group = button.closest('[data-provider-group-id]');
+      await rpc(action === 'set-default-group' ? 'provider.groups.setDefault' : 'provider.groups.setSubDefault', { groupId: group.dataset.providerGroupId });
+      toast(action === 'set-default-group' ? '已设为主默认模型组' : '已设为子默认模型组');
+      return renderControlModels();
+    }
+    if (action === 'create-instance' || action === 'save-instance') {
+      const form = button.closest('[data-provider-form]');
+      const secret = providerTextField(form, 'secret');
+      const creating = action === 'create-instance';
+      const credentialType = creating ? providerTextField(form, 'credentialType') || 'apiKey' : null;
+      const baseURL = providerTextField(form, 'customBaseURL');
+      const params = creating ? {
+        providerType: providerTextField(form, 'providerType'), label: providerTextField(form, 'label'), credentialType,
+        appendV1Suffix: providerChecked(form, 'appendV1Suffix'), useResponsesAPI: providerChecked(form, 'useResponsesAPI'),
+        isEnabled: providerChecked(form, 'isEnabled'), seedBuiltInModels: true,
+      } : {
+        instanceId, label: providerTextField(form, 'label'), customBaseURL: baseURL || null,
+        appendV1Suffix: providerChecked(form, 'appendV1Suffix'), useResponsesAPI: providerChecked(form, 'useResponsesAPI'),
+        isEnabled: providerChecked(form, 'isEnabled'),
+      };
+      if (creating && baseURL) params.customBaseURL = baseURL;
+      if (secret) params[credentialType === 'oauth' ? 'oauthToken' : 'apiKey'] = secret;
+      if (!creating && providerChecked(form, 'clearSecret')) params.apiKey = '';
+      await rpc(creating ? 'provider.instances.create' : 'provider.instances.update', params);
+      forms.providerCreate = false; forms.providerEditId = null;
+      toast(creating ? '供应商已添加' : '供应商已保存');
+      return renderControlModels();
+    }
+    if (action === 'toggle-instance') {
+      const instance = ((state.controlCache.providers || {}).instances || []).find((item) => item.id === instanceId);
+      await rpc('provider.instances.update', { instanceId, isEnabled: !(instance && instance.isEnabled !== false) });
+      return renderControlModels();
+    }
+    if (action === 'test-instance') {
+      const result = await rpc('provider.instances.test', { instanceId });
+      toast(result.ok ? '连接正常：' + (result.latencyMs || 0) + ' ms' : '连接失败：' + brief((result.error || {}).message || result.httpStatus || '未知错误', 100), result.ok ? undefined : 'error');
+      return;
+    }
+    if (action === 'refresh-models') {
+      const result = await rpc('provider.models.refresh', { instanceId });
+      toast('模型目录已刷新：' + (result.total == null ? '' : result.total + ' 个'));
+      return renderControlModels();
+    }
+    if (action === 'delete-instance') {
+      if (!window.confirm('删除此供应商及其模型和密钥？')) return;
+      await rpc('provider.instances.delete', { instanceId, confirm: true });
+      return renderControlModels();
+    }
+    if (action === 'create-model' || action === 'save-model') {
+      const form = button.closest('[data-provider-model-form]');
+      const modelId = form.dataset.providerModelId;
+      const creating = action === 'create-model';
+      const params = creating ? { instanceId: form.dataset.providerInstance, modelId: $('[data-provider-model-field="modelId"]', form).value.trim() } : { entryId: modelId };
+      const displayName = $('[data-provider-model-field="displayName"]', form).value.trim();
+      const contextWindow = Number($('[data-provider-model-field="contextWindow"]', form).value);
+      const maxOutputTokens = Number($('[data-provider-model-field="maxOutputTokens"]', form).value);
+      if (creating) {
+        if (displayName) params.displayName = displayName;
+        if (Number.isFinite(contextWindow) && contextWindow > 0) params.contextWindow = Math.round(contextWindow);
+        if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) params.maxOutputTokens = Math.round(maxOutputTokens);
+        params.supportsReasoning = !!$('[data-provider-model-field="supportsReasoning"]', form).checked;
+      } else {
+        params.displayName = displayName || null;
+        params.contextWindow = Number.isFinite(contextWindow) && contextWindow > 0 ? Math.round(contextWindow) : null;
+        params.maxOutputTokens = Number.isFinite(maxOutputTokens) && maxOutputTokens > 0 ? Math.round(maxOutputTokens) : null;
+        const existing = cachedProviderModel(modelId);
+        if (existing && existing.isCustom) params.modelId = $('[data-provider-model-field="modelId"]', form).value.trim();
+      }
+      await rpc(creating ? 'provider.models.add' : 'provider.models.update', params);
+      forms.modelCreateInstanceId = null; forms.modelEditId = null;
+      return renderControlModels();
+    }
+    if (action === 'toggle-model-hidden') {
+      const entry = cachedProviderModel(button.dataset.providerModelId);
+      await rpc('provider.models.update', { entryId: button.dataset.providerModelId, isHidden: !(entry && entry.isHidden) });
+      return renderControlModels();
+    }
+    if (action === 'delete-model') {
+      if (!window.confirm('删除此自定义模型？')) return;
+      await rpc('provider.models.delete', { entryId: button.dataset.providerModelId, confirm: true });
+      return renderControlModels();
+    }
+  }
+
+  async function handleSkillAction(button) {
+    const action = button.dataset.skillAction;
+    const card = button.closest('[data-managed-kind="skill"]');
+    const id = card && card.dataset.managedId;
+    if (action === 'show-create') { state.controlForms.skillCreate = true; state.controlForms.skillEditId = null; return renderControlSkills(); }
+    if (action === 'cancel') { state.controlForms.skillCreate = false; state.controlForms.skillEditId = null; return renderControlSkills(); }
+    if (action === 'edit') {
+      const detail = await rpc('skills.get', { skillId: id });
+      state.controlCache.skillDetails = state.controlCache.skillDetails || {};
+      state.controlCache.skillDetails[id] = detail;
+      const item = (state.controlCache.skills || []).find((skill) => skill.id === id);
+      if (item) Object.assign(item, detail);
+      state.controlForms.skillEditId = id;
+      return renderControlSkills();
+    }
+    if (action === 'create' || action === 'save') {
+      const form = button.closest('[data-skill-form]');
+      const params = { name: $('[data-skill-field="name"]', form).value.trim(), description: $('[data-skill-field="description"]', form).value.trim(), body: $('[data-skill-field="body"]', form).value };
+      if (action === 'create') params.version = $('[data-skill-field="version"]', form).value.trim() || '1.0.0';
+      else params.skillId = form.dataset.skillId;
+      await rpc(action === 'create' ? 'skills.create' : 'skills.update', params);
+      state.controlForms.skillCreate = false; state.controlForms.skillEditId = null;
+      toast(action === 'create' ? '技能已创建' : '技能已保存');
+      return renderControlSkills();
+    }
+  }
+
+  function mcpField(form, name) {
+    const field = $('[data-mcp-field="' + name + '"]', form);
+    return field ? field.value.trim() : '';
+  }
+
+  function mcpMap(raw, label) {
+    const value = {};
+    raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
+      const index = line.indexOf('=');
+      if (index < 1) throw new Error(label + ' 每行必须是 KEY=VALUE');
+      value[line.slice(0, index).trim()] = line.slice(index + 1);
+    });
+    return value;
+  }
+
+  async function handleMcpAction(button) {
+    const action = button.dataset.mcpAction;
+    const card = button.closest('[data-managed-kind="mcp"]');
+    const id = card && card.dataset.managedId;
+    if (action === 'show-create') { state.controlForms.mcpCreate = true; state.controlForms.mcpEditId = null; return renderControlMcp(); }
+    if (action === 'show-import') { state.controlForms.mcpImport = true; return renderControlMcp(); }
+    if (action === 'cancel') { state.controlForms.mcpCreate = false; state.controlForms.mcpEditId = null; return renderControlMcp(); }
+    if (action === 'cancel-import') { state.controlForms.mcpImport = false; return renderControlMcp(); }
+    if (action === 'edit') {
+      const detail = await rpc('mcp.get', { serverId: id });
+      const servers = state.controlCache.mcp || [];
+      const index = servers.findIndex((server) => server.id === id);
+      if (index >= 0) servers[index] = detail.server || detail;
+      state.controlForms.mcpEditId = id;
+      return renderControlMcp();
+    }
+    if (action === 'import') {
+      const form = button.closest('[data-mcp-import-form]');
+      const result = await rpc('mcp.import', { configJson: $('[data-mcp-import-json]', form).value });
+      state.controlForms.mcpImport = false;
+      toast('已导入 ' + (result.count || 0) + ' 个 MCP 服务器');
+      return renderControlMcp();
+    }
+    if (action === 'create' || action === 'save') {
+      const form = button.closest('[data-mcp-form]');
+      const url = mcpField(form, 'url');
+      const command = mcpField(form, 'command');
+      if (!!url === !!command) throw new Error('HTTP/SSE URL 与 STDIO 命令必须且只能填写一个');
+      const timeout = Number(mcpField(form, 'timeout'));
+      const params = {
+        note: mcpField(form, 'note') || null, url: url || null, command: command || null,
+        args: $('[data-mcp-field="args"]', form).value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+        env: mcpMap($('[data-mcp-field="env"]', form).value, '环境变量'), headers: mcpMap($('[data-mcp-field="headers"]', form).value, '请求头'),
+        enabled: !!$('[data-mcp-field="enabled"]', form).checked,
+        startupTimeoutSeconds: Number.isFinite(timeout) && timeout > 0 ? Math.round(timeout) : null,
+      };
+      if (action === 'create') params.serverId = mcpField(form, 'id');
+      else params.serverId = form.dataset.mcpServerId;
+      await rpc(action === 'create' ? 'mcp.create' : 'mcp.update', params);
+      state.controlForms.mcpCreate = false; state.controlForms.mcpEditId = null;
+      toast(action === 'create' ? 'MCP 服务器已添加' : 'MCP 服务器已保存');
+      return renderControlMcp();
+    }
+  }
+
+  async function handleEnvironmentAction(button) {
+    const action = button.dataset.environmentAction;
+    const card = button.closest('[data-environment-id]');
+    const id = card && card.dataset.environmentId;
+    if (action === 'show-create') { state.controlForms.environmentCreate = true; state.controlForms.environmentEditId = null; return renderControlEnvironment(); }
+    if (action === 'cancel') { state.controlForms.environmentCreate = false; state.controlForms.environmentEditId = null; return renderControlEnvironment(); }
+    if (action === 'edit') { state.controlForms.environmentEditId = id; state.controlForms.environmentCreate = false; return renderControlEnvironment(); }
+    if (action === 'delete') {
+      if (!window.confirm('删除此环境变量？')) return;
+      await rpc('environments.delete', { id });
+      return renderControlEnvironment();
+    }
+    if (action === 'create' || action === 'save') {
+      const form = button.closest('[data-environment-form]');
+      const value = $('[data-environment-field="value"]', form).value;
+      const params = { key: $('[data-environment-field="key"]', form).value.trim(), note: $('[data-environment-field="note"]', form).value.trim() };
+      if (action === 'create') params.value = value;
+      else {
+        params.id = form.dataset.environmentId;
+        if (value || !!$('[data-environment-field="clearValue"]', form).checked) params.value = value;
+      }
+      await rpc(action === 'create' ? 'environments.create' : 'environments.update', params);
+      state.controlForms.environmentCreate = false; state.controlForms.environmentEditId = null;
+      toast(action === 'create' ? '环境变量已添加' : '环境变量已保存');
+      return renderControlEnvironment();
+    }
+  }
+
+  async function handleStorageAction(button) {
+    const action = button.dataset.storageAction;
+    const mountCard = button.closest('[data-storage-mount-id]');
+    const mountId = mountCard && mountCard.dataset.storageMountId;
+    if (action === 'open-native-picker') {
+      const deepLink = ((state.controlCache.environment || {}).storage || {}).settingsDeepLink || 'minis://settings/mount-external';
+      window.location.assign(deepLink);
+      return;
+    }
+    if (action === 'browse-path' || action === 'browse-mount') {
+      const target = action === 'browse-path' ? button.closest('[data-storage-path]').dataset.storagePath : ((state.controlCache.environment || {}).mounts || []).find((mount) => mount.id === mountId).path;
+      // Set the path before openWorkspace starts its automatic load; otherwise
+      // the old workspace request can race and repaint over this folder.
+      state.workspacePath = target;
+      closeControl(); openWorkspace('files'); await loadWorkspaceFiles(target);
+      return;
+    }
+    if (action === 'edit-mount') { state.controlForms.mountEditId = mountId; return renderControlEnvironment(); }
+    if (action === 'cancel-mount') { state.controlForms.mountEditId = null; return renderControlEnvironment(); }
+    if (action === 'save-mount') {
+      const form = button.closest('[data-mount-form]');
+      const id = form.dataset.mountId;
+      const current = ((state.controlCache.environment || {}).mounts || []).find((mount) => mount.id === id) || {};
+      const name = $('[data-mount-field="name"]', form).value.trim();
+      const allowWrite = !!$('[data-mount-field="allowWrite"]', form).checked;
+      if (name !== current.name) await rpc('storage.mounts.rename', { id, name });
+      if (allowWrite !== !!current.userAllowWrite) await rpc('storage.mounts.setWritable', { id, allowWrite });
+      state.controlForms.mountEditId = null;
+      return renderControlEnvironment();
+    }
+    if (action === 'remove-mount') {
+      if (!window.confirm('移除此外部挂载？不会删除手机上的原始文件。')) return;
+      await rpc('storage.mounts.remove', { id: mountId, confirm: true });
+      return renderControlEnvironment();
+    }
   }
 
   /* ── event handlers ────────────────────────────────────────────────── */
@@ -2194,6 +2638,13 @@
         await toggleModelMenu();
         return;
       }
+      // Await inside this try block so rejected RPCs become a visible toast or
+      // status message instead of an unhandled click-listener promise.
+      if (button.dataset.providerAction) return await handleProviderAction(button);
+      if (button.dataset.skillAction) return await handleSkillAction(button);
+      if (button.dataset.mcpAction) return await handleMcpAction(button);
+      if (button.dataset.environmentAction) return await handleEnvironmentAction(button);
+      if (button.dataset.storageAction) return await handleStorageAction(button);
       const managed = button.closest('[data-managed-kind]');
       if (managed) {
         const kind = managed.dataset.managedKind;

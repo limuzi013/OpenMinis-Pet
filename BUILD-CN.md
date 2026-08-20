@@ -7,8 +7,9 @@
 在官方 OpenMinis `1.12`（versionCode 24）基础上合并了三组改造：
 
 - **桌面宠物**：悬浮宠物、点击对话、语音输入输出、巡游与贴边隐藏、Agent 状态联动
+- **默认数字助手**：Android Assistant Role、系统助手手势唤起与识别服务桥
 - **Pi 风格 Agent**
-- **Web Remote**：网页远程管理、登录鉴权、Cloudflare Tunnel
+- **Web Remote**：网页远程管理、Provider/模型/技能/MCP/环境与挂载、登录鉴权、Cloudflare Tunnel
 
 `applicationId` 是 `dev.openminispet.android`，与官方版 `com.openminis.app` **不冲突，可同时安装**。
 
@@ -79,6 +80,7 @@ adb install -r src/android/app/build/outputs/apk/debug/app-debug.apk
 1. 打开 App → 设置 → 权限 → 系统权限 → **显示在其他应用上层**，授权。
 2. 设置 → 外观 → **桌面宠物** → 导入宠物包 ZIP（内含 `pet.json` + `spritesheet.webp`），启动宠物。
 3. 想让宠物能对话，先在设置里配好默认模型（Provider + API Key）。
+4. 如需系统手势唤起，在设置页申请「默认数字助手」；OEM 可能要求在系统设置中手动确认。
 
 ## 已知限制
 

@@ -3,7 +3,8 @@
 > **这是 [OpenMinis](https://github.com/OpenMinis/OpenMinis) 的非官方分支，只做了一点二次创作。**
 >
 > Agent、PRoot 沙盒、模型接入、整个 App 的骨架全部是原作者的功劳。本仓库只是在官方源码上
-> 加了三样东西，并且**只做 Android**。有问题请在本仓库反馈，**不要去打扰上游维护者**。
+> 做了面向 Android 的桌面伴侣、系统助手和远程工作台增强，并且**只做 Android**。
+> 有问题请在本仓库反馈，**不要去打扰上游维护者**。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
@@ -89,12 +90,21 @@ my-pet.zip
 - **会自己动**：空闲时随机巡游、拖动后吸附边缘、久置贴边隐藏只露一点，点一下滑回来
 - **跟着 Agent 状态走**：`running / waiting / review / failed / idle`，任务完成时招手说一句
 - **熄屏就停**：动画、巡游、随机动作全部暂停，亮屏恢复
+- **恢复不飘走**：授权页返回会自动重试，换宠物包/缩放/重启后会重新限制到屏幕范围，
+  拖拽前后位置都持久化；加载失败不会留下一个看不见但常驻的前台服务
 - 悬浮窗权限并入官方的「设置 → 权限 → 系统权限」页，宠物页只做提示
 
 宠物对话直连当前默认模型，**不跑 Agent 工具链**：能问答能总结，不能执行命令或读写文件。
 真要干活还是在 App 里开正常会话。
 
-### 二、编码可靠性增强
+### 二、默认数字助手
+
+App 可以申请 Android 标准的 `ROLE_ASSISTANT`。设为系统默认助手后，长按 Home、电源键助手
+手势或 ROM 提供的助手入口会通过 `VoiceInteractionSession` 把现有 OpenMinis 任务拉到前台。
+声明中包含真实的 Session 与 Recognition 服务；识别桥会复用设备已有的系统 ASR，并避免递归
+调用自己。部分 ROM 仍只允许用户在系统设置页手动选择，App 不会也不能静默抢占默认助手。
+
+### 三、编码可靠性增强
 
 移植了 Pi 风格 coding-agent 里几项高价值能力，改的是 Agent 动文件和跑命令时的行为，
 都是防止「改坏东西」和「撑爆上下文」的。
@@ -130,7 +140,7 @@ my-pet.zip
 当前会话。委派深度上限 3 层，单个子任务超时 10 分钟，子会话会以「↳ 标题」的
 形式出现在会话列表里，方便事后查看。
 
-### 三、Web 远程控制
+### 四、Web 远程控制
 
 浏览器里管手机上的 Agent，和 Android 原生界面**共享同一个 Session、同一
 `ChatViewModel`、Agent Loop 和 Persistent Shell**——不是另开一套会话。网页修改模型或
@@ -150,7 +160,13 @@ my-pet.zip
 - **工作区**：文件树、在线编辑、Persistent Shell、交付物与最近 Agent Activity
   通过「工作区」按需全屏打开，不会永久挤窄聊天区；支持文件拖放或从剪贴板粘贴附件
 - 技能、记忆（含 SOUL.md）、MCP 服务器、定时任务四个管理页签：列表、启停、
-  删除都在网页上完成；记忆文件可以直接在线编辑，定时任务还能一键「立即运行」
+  删除都在网页上完成；技能和 MCP 还可新建/编辑或导入配置，记忆文件可以直接在线编辑，
+  定时任务还能一键「立即运行」
+- **模型与 Provider 管理**：网页直接调用手机端 `ProviderRepository`，可添加、编辑、测试、
+  启停和删除 Provider/API Key，也可新增、修改、隐藏和删除模型；密钥只写入手机加密存储，
+  不会从列表接口回传
+- **环境与存储**：环境变量可安全增删改；共享目录 `/var/minis/{shared,skills,memory}` 和
+  已授权的 `/var/minis/mounts/*` 可在工作区打开，现有外部挂载可改名、切换写权限或移除
 - 登录鉴权：PBKDF2-HMAC-SHA256（210k 轮）+ 12 小时 HttpOnly Session Cookie，
   **没设密码就拒绝启动**；默认只监听 `127.0.0.1`，要开局域网得显式打开
 - Cloudflare Tunnel 管理，没有公网 IP 也能用域名访问
@@ -173,6 +189,7 @@ React/Cordis bundle 塞进 APK，也不冒充与 DeepSeek 有关联；主题与�
 1. 「设置 → 权限 → 系统权限 → 显示在其他应用上层」授权
 2. 「设置 → 外观 → 桌面宠物」导入宠物包 ZIP，启动宠物
 3. 想让宠物说话，先在设置里配好默认模型（Provider + API Key）
+4. 想用系统手势唤起，在「设置 → 默认数字助手」申请角色；部分 ROM 会跳到系统设置手动选择
 
 Web 远程控制在「设置 → Web 远程控制」，**必须先设登录密码**才能启动。
 
@@ -193,6 +210,8 @@ git clone --recursive https://github.com/limuzi013/OpenMinis-Pet.git
   （`SpeechRecognizer.isRecognitionAvailable()` 返回 `false`），这时要在
   「设置 → 语音」给 Voice Input 组绑一个云端 ASR 模型，宠物的麦克风才能用。
 - 宠物对话没有工具调用能力（见上）。
+- Android 的外部目录授权必须由手机上的 SAF 系统选择器完成；网页可以管理和打开已有挂载，
+  不能替用户在浏览器里授予新的系统目录权限。
 - 只构建 `arm64-v8a`，不支持 32 位设备和 x86 模拟器。
 - Release 里的 APK 用 debug 签名（沿用上游配置），仅供自用。
 
