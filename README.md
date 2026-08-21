@@ -12,15 +12,15 @@
 
 ## 下载已验证 APK
 
-[下载 `OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk)
+[下载 `OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk)
 
 - 版本：`1.12-pet.11-SNAPSHOT`（versionCode 31）
 - 架构：`arm64-v8a`
-- 大小：`51,600,188` bytes
-- SHA-256：`9b58bb09b617eb1d6722f4afb30fa797017f2958eb713cc17231f4f5b2c891cf`
+- 大小：`54,194,427` bytes
+- SHA-256：`d5c5bfacd80a0bac517d3c63c664d77df42430d1217e94fbed61ac0e1c00d1c4`
 - 签名：debug keystore，仅供开发、自测和源码对应验证
 
-下载后可用 `adb install -r OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk` 安装。这个 APK
+下载后可用 `adb install -r OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk` 安装。这个 APK
 对应下面所述的 Harness 风格事件流工作台、完整 Web 设置管理、默认数字助手修复和桌面宠物
 P0 迭代；后续快照如更换二进制，会同步更新文件名、字节数和校验值。
 

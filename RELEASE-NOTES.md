@@ -37,13 +37,13 @@ It is a development/debug-signed artifact rather than a production Play release.
 
 ## Build status
 
-Verified debug build: `OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`
+Verified debug build: `OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk`
 
 - Variant: `debug` (debug keystore; development/self-test only)
 - ABI: `arm64-v8a`
-- Size: `51,600,188` bytes
-- SHA-256: `9b58bb09b617eb1d6722f4afb30fa797017f2958eb713cc17231f4f5b2c891cf`
-- Repository path: [`releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk)
+- Size: `54,194,427` bytes
+- SHA-256: `d5c5bfacd80a0bac517d3c63c664d77df42430d1217e94fbed61ac0e1c00d1c4`
+- Repository path: [`releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk)
 
 Built with `./gradlew :app:assembleDebug --no-daemon` after the WebSocket event-log,
 tool-trajectory, default-assistant selector, and pet overlay geometry/state regression tests passed.

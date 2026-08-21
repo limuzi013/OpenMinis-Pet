@@ -211,7 +211,7 @@ class RemoteAccessServer(
                     // carrying an HttpOnly session cookie must prove it came
                     // from this exact Remote origin before it can subscribe to
                     // the live session event log (CSWSH protection).
-                    if (req.path == "/api/events/session" && isWebSocketUpgrade(req)) {
+                    if (req.path in setOf("/api/events/session", "/api/events.mux", "/api/events.host") && isWebSocketUpgrade(req)) {
                         if (auth == AuthKind.COOKIE && !sameWebSocketOrigin(req)) {
                             respondJson(output, 403, JSONObject().put("error", "cross-origin websocket rejected"))
                             return
@@ -391,6 +391,12 @@ class RemoteAccessServer(
             respond(out, 405, "text/plain; charset=utf-8", "Method Not Allowed")
             return
         }
+        if (req.path.startsWith("/dsh") || req.path.startsWith("/assets/")
+            || req.path.startsWith("/plugins/") || req.path == "/favicon.svg"
+            || req.path == "/manifest.webmanifest") {
+            routeDshStatic(req, out)
+            return
+        }
         val asset = when (req.path) {
             "/", "/index.html" -> "remote/index.html"
             "/app.css" -> "remote/app.css"
@@ -414,6 +420,39 @@ class RemoteAccessServer(
         }
         val bytes = appContext.assets.open(asset).use { it.readBytes() }
         respondBytes(out, 200, mime, bytes)
+    }
+
+    private fun routeDshStatic(req: Request, out: BufferedOutputStream) {
+        val assetPath = when {
+            req.path == "/dsh" || req.path == "/dsh/" || req.path == "/dsh/index.html" -> "dsh/index.html"
+            req.path.startsWith("/dsh/") -> {
+                val sub = req.path.removePrefix("/dsh/").replace("..", "").replace("\\", "/")
+                if (sub.isEmpty()) "dsh/index.html" else "dsh/$sub"
+            }
+            else -> {
+                val sub = req.path.removePrefix("/").replace("..", "").replace("\\", "/")
+                if (sub.isEmpty()) "dsh/index.html" else "dsh/$sub"
+            }
+        }
+        val mime = when {
+            assetPath.endsWith(".html") -> "text/html; charset=utf-8"
+            assetPath.endsWith(".css") -> "text/css; charset=utf-8"
+            assetPath.endsWith(".js") -> "application/javascript; charset=utf-8"
+            assetPath.endsWith(".svg") -> "image/svg+xml"
+            assetPath.endsWith(".json") || assetPath.endsWith(".webmanifest") -> "application/json"
+            assetPath.endsWith(".woff") -> "font/woff"
+            assetPath.endsWith(".woff2") -> "font/woff2"
+            assetPath.endsWith(".ttf") -> "font/ttf"
+            assetPath.endsWith(".png") -> "image/png"
+            else -> "application/octet-stream"
+        }
+        try {
+            val bytes = appContext.assets.open(assetPath).use { it.readBytes() }
+            respondBytes(out, 200, mime, bytes)
+        } catch (_: java.io.FileNotFoundException) {
+            val fallback = appContext.assets.open("dsh/index.html").use { it.readBytes() }
+            respondBytes(out, 200, "text/html; charset=utf-8", fallback)
+        }
     }
 
     private fun routeApi(req: Request, out: BufferedOutputStream) = runBlocking {
@@ -667,7 +706,16 @@ class RemoteAccessServer(
                     if (path.isNotEmpty()) put("fullOutputPath", path)
                 })
             }
-            else -> respondJson(out, 404, JSONObject().put("error", "not found"))
+            else -> {
+                if (DshApiAdapter.isDshMethod(req.path) && req.method == "POST") {
+                    val dshMethod = req.path.removePrefix("/api/")
+                    val envelope = JSONObject(req.body)
+                    val result = DshApiAdapter.handle(appContext, dshMethod, envelope)
+                    respondJson(out, 200, result)
+                } else {
+                    respondJson(out, 404, JSONObject().put("error", "not found"))
+                }
+            }
         }
     }
 
@@ -865,6 +913,8 @@ class RemoteAccessServer(
     ) = runBlocking {
         when (req.path) {
             "/api/events/session" -> streamSessionEventsWebSocket(req, input, out)
+            "/api/events.mux" -> streamDshMuxWebSocket(req, input, out)
+            "/api/events.host" -> streamDshHostWebSocket(req, input, out)
             else -> respondJson(out, 404, JSONObject().put("error", "websocket endpoint not found"))
         }
     }
@@ -1003,6 +1053,169 @@ class RemoteAccessServer(
         } finally {
             if (peer.isOpen()) peer.close(1001, "reconnect")
         }
+    }
+
+    /**
+     * DSH mux event stream. Wraps native session events in the DSH
+     * server-request envelope so the compiled DSH frontend renders them.
+     *
+     * The client sends `{"type":"client-request","rpcId":"...","method":"subscribe",
+     * "payload":{"sessionId":"..."}}`  after connection. We read that first
+     * frame to learn the target session, then push events in DSH format.
+     */
+    private suspend fun streamDshMuxWebSocket(
+        req: Request,
+        input: BufferedInputStream,
+        out: BufferedOutputStream,
+    ) {
+        requireMethod(req, "GET")
+        val handshake = webSocketHandshake(req)
+        beginWebSocket(out, handshake.acceptKey, handshake.subprotocol)
+        val peer = WebSocketPeer(out)
+        Thread(
+            { receiveWebSocketControlFrames(input, peer) },
+            "remote-dsh-mux-control",
+        ).apply { isDaemon = true; start() }
+
+        val sessionId = req.query["sessionId"] ?: ""
+        if (sessionId.isEmpty()) {
+            peer.sendText(dshServerRequest("session/subscribed", JSONObject().apply {
+                put("sessionId", "")
+                put("lastSeq", 0)
+                put("reset", false)
+            }).toString())
+            var nextPingAt = System.currentTimeMillis() + WEBSOCKET_PING_INTERVAL_MS
+            val expiresAt = System.currentTimeMillis() + WEBSOCKET_MAX_LIFETIME_MS
+            try {
+                while (peer.isOpen() && System.currentTimeMillis() < expiresAt) {
+                    val now = System.currentTimeMillis()
+                    if (now >= nextPingAt) {
+                        if (now - peer.lastPongAt() > WEBSOCKET_PONG_GRACE_MS) {
+                            peer.close(1001, "pong timeout"); break
+                        }
+                        peer.sendPing()
+                        nextPingAt = now + WEBSOCKET_PING_INTERVAL_MS
+                    }
+                    Thread.sleep(1000L.coerceAtMost(nextPingAt - System.currentTimeMillis()).coerceAtLeast(50L))
+                }
+            } catch (_: Throwable) {}
+            if (peer.isOpen()) peer.close(1001, "reconnect")
+            return
+        }
+
+        requireExistingSession(sessionId)
+        val includeReasoning = req.query["includeReasoning"].equals("true", ignoreCase = true)
+        val afterSeq = parseWebSocketAfterSeq(req)
+        val needsSnapshot = afterSeq == null
+        var cursor = afterSeq ?: 0L
+
+        if (needsSnapshot) {
+            val captured = try {
+                com.openminis.app.debug.HeadlessChatRunner
+                    .sessionSnapshotWithWatermark(appContext, sessionId, includeReasoning)
+            } catch (t: Throwable) {
+                peer.close(1011, "snapshot failed"); return
+            }
+            cursor = captured.lastSeq
+            peer.sendText(dshServerRequest("session/subscribed", JSONObject().apply {
+                put("sessionId", sessionId)
+                put("lastSeq", cursor)
+                put("reset", false)
+            }).toString())
+        }
+
+        var nextPingAt = System.currentTimeMillis() + WEBSOCKET_PING_INTERVAL_MS
+        val expiresAt = System.currentTimeMillis() + WEBSOCKET_MAX_LIFETIME_MS
+        try {
+            coroutineScope {
+                while (peer.isOpen() && System.currentTimeMillis() < expiresAt) {
+                    val awaitAfter = cursor
+                    val wake = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        com.openminis.app.ui.chat.SessionEventHub.events
+                            .filter { it.sessionId == sessionId && it.seq > awaitAfter }
+                            .first()
+                    }
+                    val replay = com.openminis.app.debug.HeadlessChatRunner
+                        .sessionEvents(appContext, sessionId, cursor)
+                    if (replay.resetRequired) {
+                        peer.sendText(dshServerRequest("session/subscribed", JSONObject().apply {
+                            put("sessionId", sessionId)
+                            put("lastSeq", replay.latestSeq)
+                            put("reset", true)
+                        }).toString())
+                        cursor = replay.latestSeq
+                    } else {
+                        replay.events.forEach { event ->
+                            if (peer.isOpen()) {
+                                peer.sendText(dshServerRequest("session/event", JSONObject().apply {
+                                    put("sessionId", sessionId)
+                                    put("event", event.toEventJson())
+                                }).toString())
+                            }
+                        }
+                        cursor = replay.latestSeq
+                    }
+
+                    val now = System.currentTimeMillis()
+                    if (now >= nextPingAt) {
+                        if (now - peer.lastPongAt() > WEBSOCKET_PONG_GRACE_MS) {
+                            peer.close(1001, "pong timeout"); break
+                        }
+                        peer.sendPing()
+                        nextPingAt = now + WEBSOCKET_PING_INTERVAL_MS
+                    }
+                    val waitMs = (nextPingAt - System.currentTimeMillis()).coerceAtLeast(1L)
+                    withTimeoutOrNull(waitMs) { wake.await() }
+                    wake.cancel()
+                }
+            }
+        } catch (t: Throwable) {
+            if (peer.isOpen()) peer.close(1011, "dsh mux event stream failed")
+        } finally {
+            if (peer.isOpen()) peer.close(1001, "reconnect")
+        }
+    }
+
+    private suspend fun streamDshHostWebSocket(
+        req: Request,
+        input: BufferedInputStream,
+        out: BufferedOutputStream,
+    ) {
+        requireMethod(req, "GET")
+        val handshake = webSocketHandshake(req)
+        beginWebSocket(out, handshake.acceptKey, handshake.subprotocol)
+        val peer = WebSocketPeer(out)
+        Thread(
+            { receiveWebSocketControlFrames(input, peer) },
+            "remote-dsh-host-control",
+        ).apply { isDaemon = true; start() }
+
+        peer.sendText(dshServerRequest("host/ready", JSONObject().apply {
+            put("platform", "android")
+        }).toString())
+
+        var nextPingAt = System.currentTimeMillis() + WEBSOCKET_PING_INTERVAL_MS
+        val expiresAt = System.currentTimeMillis() + WEBSOCKET_MAX_LIFETIME_MS
+        try {
+            while (peer.isOpen() && System.currentTimeMillis() < expiresAt) {
+                val now = System.currentTimeMillis()
+                if (now >= nextPingAt) {
+                    if (now - peer.lastPongAt() > WEBSOCKET_PONG_GRACE_MS) {
+                        peer.close(1001, "pong timeout"); break
+                    }
+                    peer.sendPing()
+                    nextPingAt = now + WEBSOCKET_PING_INTERVAL_MS
+                }
+                Thread.sleep(1000L.coerceAtMost(nextPingAt - System.currentTimeMillis()).coerceAtLeast(50L))
+            }
+        } catch (_: Throwable) {}
+        if (peer.isOpen()) peer.close(1001, "reconnect")
+    }
+
+    private fun dshServerRequest(type: String, payload: JSONObject): JSONObject = JSONObject().apply {
+        put("type", "server-request")
+        put("rpcId", java.util.UUID.randomUUID().toString())
+        put("payload", payload.put("type", type))
     }
 
     private data class WebSocketHandshake(val acceptKey: String, val subprotocol: String?)
