@@ -20,7 +20,7 @@
       <h1 id="loginTitle">继续你的会话</h1>
       <p class="login-copy">网页与手机共享同一会话、模型、流式回复、工具轨迹和工作区。</p>
       <label class="login-field">用户名
-        <input id="usernameInput" type="text" autocomplete="username" value="admin" />
+        <input id="usernameInput" type="text" autocomplete="username" placeholder="用户名" />
       </label>
       <label class="login-field">密码
         <input id="passwordInput" type="password" autocomplete="current-password" />
@@ -81,7 +81,7 @@
         </div>
       </header>
 
-      <section id="conversationScroll" class="conversation-scroll" aria-live="polite">
+      <section id="conversationScroll" class="conversation-scroll">
         <div id="emptyHero" class="empty-hero">
           <div class="hero-glow" aria-hidden="true"></div>
           <p class="hero-kicker">OPENMINIS AGENT</p>
@@ -104,6 +104,7 @@
                 <input id="attachmentInput" type="file" class="hidden" multiple />
                 <button id="commandButton" class="composer-chip" title="快捷命令">/ 命令</button>
                 <button id="planButton" class="composer-chip" aria-pressed="false" title="切换计划模式">计划</button>
+                <button id="chatOnlyButton" class="composer-chip" aria-pressed="false" title="对话模式 — 不执行工具">对话</button>
               </div>
               <div class="composer-trailing">
                 <div id="modelSelect" class="model-select">
@@ -173,12 +174,19 @@
     <p>快速操作</p>
     <button data-command="new"><kbd>/new</kbd>新会话</button>
     <button data-command="plan"><kbd>/plan</kbd>切换计划模式</button>
+    <button data-command="chat"><kbd>/chat</kbd>切换对话模式</button>
+    <button data-command="model"><kbd>/model</kbd>切换模型</button>
     <button data-command="workspace"><kbd>/workspace</kbd>打开工作区</button>
     <button data-command="details"><kbd>/details</kbd>打开任务详情</button>
+    <button data-command="goal"><kbd>/goal</kbd>查看目标与待办</button>
     <button data-command="compact"><kbd>/compact</kbd>压缩上下文</button>
+    <button data-command="export"><kbd>/export</kbd>导出对话</button>
+    <button data-command="feedback"><kbd>/feedback</kbd>查看反馈</button>
   </div>
+  <div id="mentionMenu" class="floating-menu mention-menu hidden" role="listbox" aria-label="@ 提及"></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
+  <noscript><p style="text-align:center;padding:2rem;color:#888">OpenMinis Remote 需要启用 JavaScript。</p></noscript>
   <script src="/marked.js"></script>
   <script src="/purify.js"></script>
   <script src="/md.js"></script>

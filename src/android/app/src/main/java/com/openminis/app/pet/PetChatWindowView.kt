@@ -32,6 +32,7 @@ class PetChatWindowView(context: Context) : LinearLayout(context) {
     companion object {
         const val WINDOW_WIDTH_DP = 344
         private const val IDLE_STATUS = "使用 App 默认模型；对话保存到「桌面宠物」会话"
+        private const val MAX_VISIBLE_MESSAGES = 30
     }
 
     var onSend: ((String) -> Unit)? = null
@@ -118,6 +119,7 @@ class PetChatWindowView(context: Context) : LinearLayout(context) {
         }
         val close = Button(context).apply {
             text = "×"
+            contentDescription = "关闭"
             textSize = 20f
             setTextColor(textSecondary)
             background = rounded(Color.TRANSPARENT, 10f)
@@ -168,6 +170,7 @@ class PetChatWindowView(context: Context) : LinearLayout(context) {
 
         mic.apply {
             text = "🎙"
+            contentDescription = "语音输入"
             textSize = 16f
             minWidth = 0
             minimumWidth = 0
@@ -205,6 +208,7 @@ class PetChatWindowView(context: Context) : LinearLayout(context) {
 
         send.apply {
             text = "↑"
+            contentDescription = "发送"
             textSize = 19f
             setTextColor(Color.WHITE)
             minWidth = 0
@@ -275,6 +279,7 @@ class PetChatWindowView(context: Context) : LinearLayout(context) {
         wrap.addView(role, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         wrap.addView(body, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         transcript.addView(wrap, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        while (transcript.childCount > MAX_VISIBLE_MESSAGES) transcript.removeViewAt(0)
         transcriptScroll.post { transcriptScroll.fullScroll(FOCUS_DOWN) }
     }
 

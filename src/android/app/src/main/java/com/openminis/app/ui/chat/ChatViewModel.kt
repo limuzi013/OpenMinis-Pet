@@ -826,6 +826,8 @@ class ChatViewModel(
     /** Structured agent history for the agent loop (contentParts-based). */
     private val agentHistory = mutableListOf<LLMMessage>()
 
+    @Volatile var chatOnlyForNextTurn = false
+
     /**
      * All agent tool definitions, recomputed on each read so the memory
      * toggle gate (see [_memoryEnabled]) takes effect immediately when
@@ -5867,6 +5869,7 @@ class ChatViewModel(
                         // T298: completion notifier should show the ❌ variant.
                         SessionActivityTracker.markStreamError(activeSessionId)
                     } finally {
+                        chatOnlyForNextTurn = false
                         AppLogger.info(TAG_STREAM, "send streamJob FINALLY enter")
                         // [T-android-overlay-reply-status-34599] Surface
                         // the assistant's most recent reply text to the
@@ -7032,10 +7035,11 @@ class ChatViewModel(
                     // [_compactSummary] is prepended as a `<context-summary>`
                     // user message. Falls through to the raw agentHistory when
                     // no compact has happened, so the common path stays zero-copy.
+                    val turnTools = if (chatOnlyForNextTurn) emptyList() else agentTools
                     currentProvider.streamMessage(
                         applyRequestImageBudget(effectiveAgentHistory()),
                         systemPrompt, dynamicMaxTokens(currentProvider, lastContextTokens),
-                        tools = agentTools,
+                        tools = turnTools,
                         thinkingLevel = if (currentModelSupportsReasoning) _thinkingLevel.value else ThinkingLevel.OFF,
                     ).collect { chunk ->
                 when (chunk) {

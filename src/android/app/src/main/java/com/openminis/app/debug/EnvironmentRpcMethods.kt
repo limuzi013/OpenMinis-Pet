@@ -26,16 +26,22 @@ internal object EnvironmentRpcMethods {
         })
     }
 
+    private val VALID_KEY = Regex("^[A-Za-z_][A-Za-z0-9_]{0,254}$")
+
     fun create(context: Context, params: JSONObject): JSONObject {
         val key = params.optString("key", "").trim().ifEmpty {
             throw RPCException(-32602, "Missing 'key' param")
+        }
+        if (!VALID_KEY.matches(key)) {
+            throw RPCException(-32602, "Key must be a valid shell identifier (letters, digits, underscores)")
         }
         if (!params.has("value")) throw RPCException(-32602, "Missing 'value' param")
         val r = repo(context)
         if (!r.add(key, params.optString("value", ""), params.optString("note", ""))) {
             throw RPCException(-32602, "Invalid or duplicate environment-variable key")
         }
-        val created = r.entries.value.first { it.key.equals(key, ignoreCase = true) }
+        val created = r.entries.value.firstOrNull { it.key.equals(key, ignoreCase = true) }
+            ?: throw RPCException(-32000, "Environment variable was not persisted after add")
         return JSONObject().put("entry", entryJson(r, created))
     }
 

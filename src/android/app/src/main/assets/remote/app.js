@@ -12,6 +12,7 @@
   const $ = (selector, root) => (root || document).querySelector(selector);
   const $$ = (selector, root) => Array.from((root || document).querySelectorAll(selector));
   const FLOW_LIMIT = 2000;
+  let _rpcId = 0;
   const THINKING_LEVELS = [
     ['off', '关闭思考'],
     ['low', '低'],
@@ -77,6 +78,12 @@
     },
     feedback: new Map(),
     searchTimer: null,
+    chatOnly: false,
+    mentionAnchor: -1,
+    mentionFilter: '',
+    mentionIndex: -1,
+    mentionItems: [],
+    mentionCache: null,
   };
 
   function esc(value) {
@@ -124,7 +131,7 @@
 
   function markdown(value) {
     const raw = text(value);
-    if (window.MD && typeof window.MD.render === 'function') return window.MD.render(raw);
+    if (window.MD && typeof window.MD.render === 'function' && window.DOMPurify) return window.MD.render(raw);
     return esc(raw).replace(/\n/g, '<br>');
   }
 
@@ -162,7 +169,7 @@
       method: 'POST',
       body: JSON.stringify({
         jsonrpc: '2.0',
-        id: Date.now(),
+        id: ++_rpcId,
         method,
         params: params || {},
       }),
@@ -394,6 +401,7 @@
     state.selectedTool = null;
     state.question = null;
     state.approval = null;
+    state.feedback.clear();
     state.lastEventSeq = 0;
     state.eventBaselineKnown = false;
     state.eventGapRecovering = false;
@@ -457,7 +465,8 @@
   }
 
   function scheduleLiveReconnect(id) {
-    if (!id || state.sessionId !== id || state.liveReconnectTimer || document.hidden) return;
+    if (!id || state.sessionId !== id || state.liveReconnectTimer) return;
+    if (document.hidden) return;
     state.liveReconnectAttempt = Math.min(state.liveReconnectAttempt + 1, 8);
     const delay = Math.min(12000, 420 * Math.pow(1.65, state.liveReconnectAttempt - 1));
     state.liveReconnectTimer = setTimeout(() => {
@@ -695,12 +704,14 @@
       const at = Number(position);
       if (Number.isInteger(at) && at >= 0 && at < state.messages.length) state.messages.splice(at, 0, message);
       else state.messages.push(message);
+      invalidateResultCache();
       return message;
     }
     const message = state.messages[index];
     Object.keys(payload).forEach((key) => {
       if (payload[key] !== undefined) message[key] = payload[key];
     });
+    invalidateResultCache();
     return message;
   }
 
@@ -759,7 +770,7 @@
   function removePatchedMessage(id) {
     const key = String(id || '');
     const index = state.messages.findIndex((item) => String(item.id) === key);
-    if (index >= 0) state.messages.splice(index, 1);
+    if (index >= 0) { state.messages.splice(index, 1); invalidateResultCache(); }
     const node = state.nodeById.get(key);
     if (node) node.remove();
     state.nodeById.delete(key);
@@ -1166,8 +1177,16 @@
   function updateRunChrome() {
     $('#stopButton').classList.toggle('hidden', !state.running);
     $('#sendButton').classList.toggle('hidden', state.running);
-    $('#composerStatus').textContent = state.running ? '手机 Agent 正在生成，实时更新中' : '与手机上的会话实时同步';
+    $('#composerStatus').textContent = state.running ? '手机 Agent 正在生成，实时更新中' : (state.chatOnly ? '对话模式 · 不执行工具与命令' : '与手机上的会话实时同步');
     $('#prompt').disabled = !!state.question || !!state.approval;
+    if (!state.running) {
+      const lastId = lastAssistantMessageId();
+      const lastMsg = lastId && state.messages.find((m) => String(m.id) === lastId);
+      if (lastMsg) {
+        lastMsg.isStreaming = false;
+        publishPatchedMessage(lastMsg);
+      }
+    }
   }
 
   function renderBlankConversation() {
@@ -1220,7 +1239,14 @@
       }));
   }
 
+  let _resultCache = null;
+  let _resultCacheVer = 0;
+  let _resultCacheGen = 0;
+
+  function invalidateResultCache() { _resultCacheGen++; }
+
   function resultsByCall(messages) {
+    if (_resultCache && _resultCacheVer === _resultCacheGen) return _resultCache;
     const result = new Map();
     messages.forEach((message) => {
       liveResults(message).forEach((item) => {
@@ -1228,6 +1254,8 @@
         if (id) result.set(String(id), item);
       });
     });
+    _resultCache = result;
+    _resultCacheVer = _resultCacheGen;
     return result;
   }
 
@@ -1366,24 +1394,28 @@
     body.dataset.signature = signature;
     body.classList.toggle('is-live', isLive);
     if (isLive) {
-      // Text deltas preserve this body and cursor node.  The only mutation per
-      // token is a Text node update, matching DSH's partial accumulator rather
-      // than replacing the visible transcript subtree.
-      let liveText = $('[data-live-text]', body);
+      // Render Markdown progressively during streaming, throttled to avoid
+      // layout thrashing on every single token delta.
+      const now = Date.now();
+      const lastRender = Number(body.dataset.lastRender || 0);
+      const shouldRender = now - lastRender > 120 || value.length < 200;
       let cursor = $('.stream-cursor', body);
-      if (!liveText || !cursor) {
-        body.replaceChildren();
-        liveText = document.createElement('span');
-        liveText.dataset.liveText = 'true';
-        cursor = document.createElement('span');
-        cursor.className = 'stream-cursor';
-        cursor.setAttribute('aria-hidden', 'true');
-        body.appendChild(liveText);
+      if (shouldRender) {
+        const rendered = value ? markdown(value) : '';
+        if (!cursor) {
+          cursor = document.createElement('span');
+          cursor.className = 'stream-cursor';
+          cursor.setAttribute('aria-hidden', 'true');
+        } else {
+          cursor.remove();
+        }
+        body.innerHTML = rendered;
         body.appendChild(cursor);
+        body.dataset.lastRender = String(now);
       }
-      if (liveText.textContent !== value) liveText.textContent = value;
     } else {
       body.innerHTML = value ? markdown(value) : '';
+      delete body.dataset.lastRender;
     }
   }
 
@@ -1470,6 +1502,172 @@
     return found ? found[1] : String(level);
   }
 
+  function toggleChatOnly() {
+    state.chatOnly = !state.chatOnly;
+    const button = $('#chatOnlyButton');
+    if (button) {
+      button.setAttribute('aria-pressed', String(state.chatOnly));
+      button.classList.toggle('active', state.chatOnly);
+    }
+    updateChatOnlyChrome();
+  }
+
+  function updateChatOnlyChrome() {
+    const indicator = $('#composerStatus');
+    if (!indicator) return;
+    if (state.chatOnly && !state.running) {
+      indicator.textContent = '对话模式 · 不执行工具与命令';
+    } else if (state.running) {
+      indicator.textContent = '手机 Agent 正在生成，实时更新中';
+    } else {
+      indicator.textContent = '与手机上的会话实时同步';
+    }
+  }
+
+  const BUILTIN_TOOLS = [
+    { name: 'shell_execute', hint: '执行命令', icon: '›_' },
+    { name: 'file_read', hint: '读取文件', icon: '□' },
+    { name: 'file_write', hint: '写入文件', icon: '□' },
+    { name: 'file_edit', hint: '编辑文件', icon: '□' },
+    { name: 'read_image', hint: '读取图片', icon: '⌁' },
+    { name: 'browser_use', hint: '浏览器', icon: '◎' },
+    { name: 'subagent', hint: '子代理', icon: '◈' },
+    { name: 'ralph', hint: '搜索引擎', icon: '⌕' },
+    { name: 'ask_user_question', hint: '询问用户', icon: '?' },
+    { name: 'get_goal', hint: '获取目标', icon: '◉' },
+    { name: 'create_goal', hint: '创建目标', icon: '◉' },
+    { name: 'update_goal', hint: '更新目标', icon: '◉' },
+    { name: 'todo_write', hint: '写入待办', icon: '☑' },
+    { name: 'job_output', hint: '任务输出', icon: '▸' },
+    { name: 'job_list', hint: '任务列表', icon: '▸' },
+    { name: 'job_kill', hint: '终止任务', icon: '▸' },
+    { name: 'memory_write', hint: '写入记忆', icon: '♡' },
+    { name: 'memory_get', hint: '读取记忆', icon: '♡' },
+  ];
+
+  async function loadMentionCandidates() {
+    if (state.mentionCache) return state.mentionCache;
+    const items = [];
+    BUILTIN_TOOLS.forEach(function (t) {
+      items.push({ kind: 'tool', name: t.name, hint: t.hint, icon: t.icon });
+    });
+    try {
+      const skills = await rpc('skills.list', {});
+      (skills.skills || skills || []).forEach(function (s) {
+        if (s.enabled === false) return;
+        items.push({ kind: 'skill', name: s.name || s.id, hint: s.description || '技能', icon: '⚡' });
+      });
+    } catch (_) {}
+    try {
+      if (state.sessionId) {
+        const files = await api('/api/files?sessionId=' + encodeURIComponent(state.sessionId) + '&path=/var/minis/workspace');
+        (files.items || []).forEach(function (f) {
+          items.push({ kind: 'file', name: f.name, hint: f.isDirectory ? '目录' : (f.size != null ? (f.size > 1024 ? Math.round(f.size / 1024) + 'K' : f.size + 'B') : '文件'), icon: f.isDirectory ? '▱' : '□' });
+        });
+      }
+    } catch (_) {}
+    state.mentionCache = items;
+    setTimeout(function () { state.mentionCache = null; }, 30000);
+    return items;
+  }
+
+  function filterMentionItems(items, filter) {
+    if (!filter) return items.slice(0, 20);
+    const lower = filter.toLowerCase();
+    return items.filter(function (item) {
+      return item.name.toLowerCase().includes(lower) || (item.hint && item.hint.toLowerCase().includes(lower));
+    }).slice(0, 20);
+  }
+
+  function renderMentionMenu() {
+    const menu = $('#mentionMenu');
+    const items = state.mentionItems;
+    if (!items.length) {
+      menu.innerHTML = '<div class="mention-empty">没有匹配项</div>';
+      return;
+    }
+    var lastKind = '';
+    var html = '';
+    var kindLabels = { tool: '工具', skill: '技能', file: '工作区文件' };
+    items.forEach(function (item, i) {
+      if (item.kind !== lastKind) {
+        lastKind = item.kind;
+        html += '<div class="mention-group">' + esc(kindLabels[item.kind] || item.kind) + '</div>';
+      }
+      html += '<button role="option" data-mention-index="' + i + '"' + (i === state.mentionIndex ? ' class="selected"' : '') + '>' +
+        '<span class="mention-icon">' + esc(item.icon) + '</span>' +
+        '<span class="mention-name">' + esc(item.name) + '</span>' +
+        '<span class="mention-hint">' + esc(item.hint) + '</span>' +
+        '</button>';
+    });
+    menu.innerHTML = html;
+    var sel = menu.querySelector('.selected');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+
+  function showMentionMenu() {
+    const menu = $('#mentionMenu');
+    const rect = $('#composerCard').getBoundingClientRect();
+    menu.style.left = Math.max(8, rect.left) + 'px';
+    menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+    menu.style.top = 'auto';
+    menu.classList.remove('hidden');
+    renderMentionMenu();
+  }
+
+  function hideMentionMenu() {
+    $('#mentionMenu').classList.add('hidden');
+    state.mentionAnchor = -1;
+    state.mentionFilter = '';
+    state.mentionIndex = -1;
+    state.mentionItems = [];
+  }
+
+  function commitMention(item) {
+    if (!item) return;
+    var input = $('#prompt');
+    var text = input.value;
+    var anchor = state.mentionAnchor;
+    if (anchor < 0) { hideMentionMenu(); return; }
+    var end = anchor + 1;
+    while (end < text.length && !text[end].match(/\s/)) end++;
+    var insert = '@' + item.name + ' ';
+    input.value = text.substring(0, anchor) + insert + text.substring(end);
+    input.selectionStart = input.selectionEnd = anchor + insert.length;
+    hideMentionMenu();
+    autoGrow();
+    input.focus();
+  }
+
+  async function updateMentionState() {
+    var input = $('#prompt');
+    var text = input.value;
+    var caret = input.selectionStart;
+    var anchor = -1;
+    var i = caret;
+    while (i > 0) {
+      var prev = i - 1;
+      var ch = text[prev];
+      if (/\s/.test(ch)) break;
+      if (ch === '@' || ch === '＠') {
+        if (prev === 0 || /\s/.test(text[prev - 1])) anchor = prev;
+        break;
+      }
+      i = prev;
+    }
+    if (anchor < 0) {
+      if (state.mentionAnchor >= 0) hideMentionMenu();
+      return;
+    }
+    var filter = text.substring(anchor + 1, caret);
+    state.mentionAnchor = anchor;
+    state.mentionFilter = filter;
+    var candidates = await loadMentionCandidates();
+    state.mentionItems = filterMentionItems(candidates, filter);
+    state.mentionIndex = state.mentionItems.length > 0 ? 0 : -1;
+    showMentionMenu();
+  }
+
   function renderAttachmentChips() {
     const root = $('#attachmentChips');
     const files = state.attachFiles;
@@ -1508,6 +1706,7 @@
         wait: false,
         thinkingLevel: state.thinkingLevel,
       };
+      if (state.chatOnly) body.chatOnly = true;
       if (state.sessionId) body.sessionId = state.sessionId;
       if (attachments.length) body.attachments = attachments;
       const response = await api('/api/prompt', { method: 'POST', body: JSON.stringify(body) });
@@ -1624,13 +1823,17 @@
         method: 'POST',
         body: JSON.stringify({ sessionId: state.sessionId, modelEntryId: entryId }),
       });
+      if (response.modelName) {
+        if (!state.status) state.status = {};
+        state.status.modelName = response.modelName;
+      }
       if (response.thinkingLevel) {
         state.thinkingLevel = String(response.thinkingLevel).toLowerCase();
         sessionStorage.setItem('openminis.thinking.' + state.sessionId, state.thinkingLevel);
       }
       closeModelMenu();
-      await refreshSessions(false);
       updateHeaderFromSession();
+      refreshSessions(false).then(updateHeaderFromSession).catch(() => {});
     } catch (error) {
       toast('切换模型失败：' + error.message, 'error');
       if (button) button.disabled = false;
@@ -1677,6 +1880,27 @@
       button.disabled = false;
       button.textContent = '压缩';
     }
+  }
+
+  function exportConversation() {
+    if (!state.sessionId || !state.messages.length) {
+      toast('当前没有可导出的会话', 'error');
+      return;
+    }
+    const lines = state.messages.map((m) => {
+      const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : m.role;
+      const body = text(m.content).trim();
+      return '## ' + role + '\n\n' + body;
+    });
+    const title = ($('#sessionTitle') || {}).textContent || '会话';
+    const blob = new Blob(['# ' + title + '\n\n' + lines.join('\n\n---\n\n') + '\n'], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (title || 'conversation') + '.md';
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('已导出对话');
   }
 
   /* ── questions/approval takeover ───────────────────────────────────── */
@@ -1831,7 +2055,7 @@
 
   function renderDeliverableDetail(files) {
     if (!files.length) return '';
-    return '<section class="detail-section"><div class="detail-section-head"><strong>产出文件</strong><small>' + files.length + ' 个</small></div><div class="detail-section-body">' + files.slice(0, 12).map((file) => '<button class="message-action" data-deliverable="' + esc(file.path || '') + '">' + esc((file.path || '').split('/').pop() || file.path || '文件') + '</button>').join('') + '</div></section>';
+    return '<section class="detail-section"><div class="detail-section-head"><strong>产出文件</strong><small>' + files.length + ' 个</small></div><div class="detail-section-body">' + files.slice(0, 12).map((file) => '<button class="message-action" data-deliverable="' + esc(file.path || '') + '">' + esc((file.path || '').split('/').pop() || file.path || '文件') + '</button>').join('') + '<div class="detail-actions"><button class="button button-secondary" data-detail-action="clear-deliverables">清除产出记录</button></div></div></section>';
   }
 
   function collectTools() {
@@ -1943,7 +2167,7 @@
       return;
     }
     const files = state.agent.deliverables || [];
-    root.innerHTML = files.length ? '<div class="workspace-file-list">' + files.map((file) => '<button class="workspace-file-row" data-workspace-deliverable="' + esc(file.path || '') + '"><span>□</span><strong>' + esc((file.path || '').split('/').pop() || file.path || '文件') + '</strong><small>' + esc(file.path || '') + '</small></button>').join('') + '</div>' : '<div class="workspace-empty">这个会话还没有登记产出文件。Agent 写入的文件会显示在这里。</div>';
+    root.innerHTML = files.length ? '<div class="workspace-toolbar"><span>' + files.length + ' 个产出文件</span><button class="button button-secondary" data-workspace-action="clear-deliverables">清除全部</button></div><div class="workspace-file-list">' + files.map((file) => '<button class="workspace-file-row" data-workspace-deliverable="' + esc(file.path || '') + '"><span>□</span><strong>' + esc((file.path || '').split('/').pop() || file.path || '文件') + '</strong><small>' + esc(file.path || '') + '</small></button>').join('') + '</div>' : '<div class="workspace-empty">这个会话还没有登记产出文件。Agent 写入的文件会显示在这里。</div>';
   }
 
   function renderWorkspaceEditor() {
@@ -2616,6 +2840,12 @@
           wait: false,
         });
         toast('已从此工具重新开始');
+      } else if (action === 'clear-deliverables') {
+        rpc('agent.deliverables.clear', { sessionId: state.sessionId }).then(() => {
+          state.agent.deliverables = [];
+          renderDetails();
+          toast('已清除产出文件记录');
+        }).catch((error) => toast(error.message, 'error'));
       }
       const deliverable = target.dataset.deliverable;
       if (deliverable) {
@@ -2842,18 +3072,20 @@
       const message = state.messages.find((item) => String(item.id) === id);
       if (action === 'copy') {
         const copy = contentOf(message);
+        const btn = event.target;
         try {
           await navigator.clipboard.writeText(copy);
-          toast('已复制');
         } catch (_) {
           const area = document.createElement('textarea');
           area.value = copy;
+          area.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
           document.body.appendChild(area);
           area.select();
           document.execCommand('copy');
           area.remove();
-          toast('已复制');
         }
+        btn.textContent = '已复制 ✓';
+        setTimeout(() => { btn.textContent = '复制'; }, 1500);
       }
       if (action === 'retry') {
         try {
@@ -2869,8 +3101,33 @@
       }
     });
 
-    $('#prompt').addEventListener('input', autoGrow);
+    $('#prompt').addEventListener('input', () => { autoGrow(); updateMentionState(); });
     $('#prompt').addEventListener('keydown', (event) => {
+      if (state.mentionAnchor >= 0 && state.mentionItems.length > 0) {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          state.mentionIndex = (state.mentionIndex + 1) % state.mentionItems.length;
+          renderMentionMenu();
+          return;
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          state.mentionIndex = state.mentionIndex <= 0 ? state.mentionItems.length - 1 : state.mentionIndex - 1;
+          renderMentionMenu();
+          return;
+        }
+        if (event.key === 'Enter' || event.key === 'Tab') {
+          event.preventDefault();
+          var idx = state.mentionIndex >= 0 ? state.mentionIndex : 0;
+          commitMention(state.mentionItems[idx]);
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          hideMentionMenu();
+          return;
+        }
+      }
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         sendPrompt();
@@ -2906,12 +3163,14 @@
       if (!state.sessionId) return toast('先选择一个会话。', 'error');
       togglePlanMode().catch((error) => toast(error.message, 'error'));
     });
+    $('#chatOnlyButton').addEventListener('click', toggleChatOnly);
     $('#commandButton').addEventListener('click', (event) => {
       const menu = $('#commandMenu');
       const rect = event.currentTarget.getBoundingClientRect();
       menu.classList.toggle('hidden');
       menu.style.left = Math.max(8, rect.left) + 'px';
-      menu.style.top = Math.max(8, rect.top - 212) + 'px';
+      menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+      menu.style.top = 'auto';
     });
     $('#commandMenu').addEventListener('click', (event) => {
       const command = event.target.closest('[data-command]');
@@ -2922,6 +3181,17 @@
       if (command.dataset.command === 'workspace') openWorkspace('files');
       if (command.dataset.command === 'details') openDetails('task');
       if (command.dataset.command === 'compact') compactConversation();
+      if (command.dataset.command === 'model') toggleModelMenu();
+      if (command.dataset.command === 'goal') openDetails('task');
+      if (command.dataset.command === 'chat') toggleChatOnly();
+      if (command.dataset.command === 'export') exportConversation();
+      if (command.dataset.command === 'feedback') { if (state.sessionId) openDetails('task'); else toast('先选择一个会话', 'error'); }
+    });
+    $('#mentionMenu').addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-mention-index]');
+      if (!btn) return;
+      var idx = Number(btn.dataset.mentionIndex);
+      if (state.mentionItems[idx]) commitMention(state.mentionItems[idx]);
     });
     $('#takeover').addEventListener('click', (event) => {
       const action = event.target.dataset.takeover;
@@ -2997,6 +3267,13 @@
         renderWorkspace();
       }
       if (action === 'save-file') saveWorkspaceFile();
+      if (action === 'clear-deliverables') {
+        rpc('agent.deliverables.clear', { sessionId: state.sessionId }).then(() => {
+          state.agent.deliverables = [];
+          renderWorkspace();
+          toast('已清除产出文件记录');
+        }).catch((error) => toast(error.message, 'error'));
+      }
       const file = event.target.closest('[data-workspace-file]');
       if (file) {
         if (file.dataset.directory === 'true') loadWorkspaceFiles(file.dataset.workspaceFile);
@@ -3051,12 +3328,16 @@
       if (!event.target.closest('#sessionMenu') && !event.target.closest('[data-session-more]') && event.target !== $('#sessionMore')) closeSessionMenu();
       if (!event.target.closest('#modelSelect')) closeModelMenu();
       if (!event.target.closest('#commandMenu') && !event.target.closest('#commandButton')) $('#commandMenu').classList.add('hidden');
+      if (!event.target.closest('#mentionMenu') && !event.target.closest('#prompt')) hideMentionMenu();
     });
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         closeModelMenu();
         closeSessionMenu();
+        hideMentionMenu();
         $('#commandMenu').classList.add('hidden');
+        if (!$('#workspaceLayer').classList.contains('hidden')) closeWorkspace();
+        else if (!$('#controlLayer').classList.contains('hidden')) closeControl();
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -3069,7 +3350,11 @@
       }
     });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && state.sessionId && !state.live) openLiveStream(state.sessionId);
+      if (!document.hidden && state.sessionId) {
+        if (!state.live) openLiveStream(state.sessionId);
+        clearTimeout(state.liveReconnectTimer);
+        state.liveReconnectTimer = null;
+      }
     });
   }
 

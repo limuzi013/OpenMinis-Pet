@@ -86,12 +86,14 @@ internal object ChatMutationMethods {
         val wait = params.optBoolean("wait", false)
         val timeoutSec = params.optInt("waitTimeout", 600).coerceIn(1, 1800)
         val thinkingLevel = parseThinkingLevel(params)
+        val chatOnly = params.optBoolean("chatOnly", false)
         val result = HeadlessChatRunner.prompt(
             context = context,
             sessionId = sessionId,
             text = text,
             attachments = attachments,
             thinkingLevel = thinkingLevel,
+            chatOnly = chatOnly,
             wait = wait,
             timeoutMs = timeoutSec * 1000L,
         )
@@ -205,6 +207,7 @@ internal object ChatMutationMethods {
             put("messageCount", msgs.size)
             put("lastMessageRole", lastMsg?.role ?: JSONObject.NULL)
             put("updatedAt", s.updatedAt)
+            put("thinkingLevel", s.thinkingOverride?.lowercase() ?: "off")
         }
     }
 

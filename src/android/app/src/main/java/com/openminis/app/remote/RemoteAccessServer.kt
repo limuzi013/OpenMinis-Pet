@@ -85,10 +85,10 @@ class RemoteAccessServer(
         private const val WEBSOCKET_PONG_GRACE_MS = 50_000L
 
         fun constantTimeTokenEquals(expected: String, provided: String?): Boolean {
-            if (expected.isEmpty() || provided == null || expected.length != provided.length) return false
-            var diff = 0
-            for (i in expected.indices) diff = diff or (expected[i].code xor provided[i].code)
-            return diff == 0
+            if (expected.isEmpty() || provided == null) return false
+            val a = expected.toByteArray(Charsets.UTF_8)
+            val b = provided.toByteArray(Charsets.UTF_8)
+            return java.security.MessageDigest.isEqual(a, b)
         }
     }
 
@@ -793,7 +793,7 @@ class RemoteAccessServer(
         val canonical = try {
             resolved.canonicalFile
         } catch (_: Exception) {
-            return resolved
+            throw IllegalArgumentException("path cannot be resolved safely")
         }
         val rootPrefix = expectedRoot.trimEnd(File.separatorChar) + File.separator
         if (canonical.path != expectedRoot && !canonical.path.startsWith(rootPrefix)) {

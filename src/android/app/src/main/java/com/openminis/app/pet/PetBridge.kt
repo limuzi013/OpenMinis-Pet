@@ -55,10 +55,10 @@ object PetBridge {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
             else context.startService(intent)
-        } catch (t: Throwable) {
+        } catch (e: Exception) {
             // Never let the optional pet runtime crash an agent turn on OEM ROMs
             // that reject an FGS start from a background transition.
-            Log.w(TAG, "Unable to start/update pet overlay: ${t.message}")
+            Log.w(TAG, "Unable to start/update pet overlay: ${e.message}")
         }
     }
 }

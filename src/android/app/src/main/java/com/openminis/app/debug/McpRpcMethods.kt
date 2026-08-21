@@ -45,10 +45,15 @@ internal object McpRpcMethods {
         return JSONObject().put("server", serverToJson(server))
     }
 
+    private val VALID_ID = Regex("^[A-Za-z0-9_\\-]{1,128}$")
+
     fun create(context: Context, params: JSONObject): JSONObject {
         val r = repo(context)
         val id = params.optString("serverId", params.optString("id", "")).trim().ifEmpty {
             throw RPCException(-32602, "Missing 'serverId' param")
+        }
+        if (!VALID_ID.matches(id)) {
+            throw RPCException(-32602, "Server ID must be 1-128 characters: letters, digits, hyphens, underscores")
         }
         if (r.servers.value.any { it.id == id }) {
             throw RPCException(-32602, "MCP server already exists: $id")

@@ -163,6 +163,7 @@ internal object HeadlessChatRunner {
         text: String,
         attachments: List<InputAttachment> = emptyList(),
         thinkingLevel: ThinkingLevel? = null,
+        chatOnly: Boolean = false,
         wait: Boolean,
         timeoutMs: Long,
     ): PromptResult = withContext(Dispatchers.Main) {
@@ -220,6 +221,7 @@ internal object HeadlessChatRunner {
             )
         }
         for (att in attachments) vm.addAttachment(att)
+        if (chatOnly) vm.chatOnlyForNextTurn = true
         vm.sendMessage(text)
         if (!wait) return@withContext PromptResult(status = "Running", responseText = null, timedOut = false)
 
@@ -544,8 +546,12 @@ internal object HeadlessChatRunner {
     suspend fun selectModel(context: Context, sessionId: String, entryId: String):
         Pair<String, String> = withContext(Dispatchers.Main) {
         val vm = viewModel(context, sessionId)
+        withContext(Dispatchers.Default) {
+            withTimeoutOrNull(5000L) {
+                vm.activeEntryId.first { it != null }
+            }
+        }
         vm.selectEntry(entryId)
-        // selectEntry sets currentModel/_modelName synchronously.
         vm.modelName.value to vm.thinkingLevel.value.name
     }
 
@@ -553,6 +559,11 @@ internal object HeadlessChatRunner {
     suspend fun selectThinkingLevel(context: Context, sessionId: String, level: ThinkingLevel): String =
         withContext(Dispatchers.Main) {
             val vm = viewModel(context, sessionId)
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(3000L) {
+                    vm.activeEntryId.first { it != null }
+                }
+            }
             vm.setThinkingLevel(level)
             vm.thinkingLevel.value.name
         }

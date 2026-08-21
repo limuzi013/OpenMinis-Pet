@@ -369,23 +369,40 @@ fun AgentStateBars(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("📄", fontSize = 14.sp)
                         Spacer(Modifier.width(8.dp))
-                        deliverables.take(4).forEach { d ->
-                            Text(
-                                text = d.path.substringAfterLast('/'),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable {
-                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        cm.setPrimaryClip(ClipData.newPlainText("deliverable", d.path))
-                                        Toast.makeText(context, "已复制路径：${d.path}", Toast.LENGTH_SHORT).show()
-                                    }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                            )
+                        Column(modifier = Modifier.weight(1f)) {
+                            deliverables.take(4).forEach { d ->
+                                Text(
+                                    text = d.path.substringAfterLast('/'),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable {
+                                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            cm.setPrimaryClip(ClipData.newPlainText("deliverable", d.path))
+                                            Toast.makeText(context, "已复制路径：${d.path}", Toast.LENGTH_SHORT).show()
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                            if (deliverables.size > 4) {
+                                Text(
+                                    text = "…还有 ${deliverables.size - 4} 个",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 6.dp),
+                                )
+                            }
                         }
+                        MinisTextButton(
+                            onClick = {
+                                AgentStateStore.deliverablesClear(sessionId)
+                                deliverables = emptyList()
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("清除", style = MaterialTheme.typography.labelMedium) }
                     }
                 }
             }

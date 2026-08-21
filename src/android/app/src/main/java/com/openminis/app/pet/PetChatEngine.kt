@@ -187,7 +187,7 @@ internal class PetChatEngine(private val context: Context) {
         val fromGroup = config.defaultPrimaryGroupId
             ?.let { repo.group(it) }
             ?.memberEntryIds
-            ?.firstNotNullOfOrNull { id -> config.modelEntries.firstOrNull { it.id == id } }
+            ?.firstNotNullOfOrNull { id -> config.modelEntries.firstOrNull { it.id == id && !it.isHidden } }
         if (fromGroup != null) return fromGroup
 
         return config.modelEntries.firstOrNull { candidate ->
@@ -239,6 +239,9 @@ internal class PetChatEngine(private val context: Context) {
         }
         // Defensive: never leave a dangling half of a surrogate pair behind.
         if (end in 1 until text.length && Character.isLowSurrogate(text[end])) {
+            end--
+        }
+        if (end > 0 && Character.isHighSurrogate(text[end - 1])) {
             end--
         }
         return text.substring(0, end)
