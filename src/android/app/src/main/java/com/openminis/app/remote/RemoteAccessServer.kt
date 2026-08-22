@@ -1301,6 +1301,7 @@ class RemoteAccessServer(
                             val frame = DshApiAdapter.nativeEventToMuxFrame(
                                 event.sessionId,
                                 event.toEventJson(),
+                                appContext,
                             )
                             peer.sendText(dshServerRequest("events.mux", frame.optString("type"), frame).toString())
                         }
@@ -1379,7 +1380,7 @@ class RemoteAccessServer(
                                 // DSH's for the three message-producing events —
                                 // see DshApiAdapter.nativeEventToMuxFrame.
                                 val frame = DshApiAdapter.nativeEventToMuxFrame(
-                                    sessionId, event.toEventJson()
+                                    sessionId, event.toEventJson(), appContext
                                 )
                                 val type = frame.optString("type")
                                 peer.sendText(

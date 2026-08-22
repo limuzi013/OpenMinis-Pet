@@ -352,7 +352,11 @@ object DshApiAdapter {
         }
         val events = JSONArray()
         for (event in candidates.subList(start, candidates.size)) {
-            val translated = nativeEventToMuxFrame(sid, event.toEventJson())
+            // Pass the host context: imageRefs become durable DSH image
+            // blocks only when the translator can reach the MediaStore file
+            // (context == null skips them — that path must never be used by
+            // history, or refresh loses the images).
+            val translated = nativeEventToMuxFrame(sid, event.toEventJson(), context)
                 .getJSONObject("event")
             events.put(historyEntry(translated))
         }
@@ -941,10 +945,10 @@ object DshApiAdapter {
      * Build DSH `image` content blocks for a native message's canonical
      * MediaRefs. Each block carries the durable attachment ref
      * `{ attachmentId, mediaType, bytes, width, height, name? }` that
-     * `session.attachment` resolves. Missing/null context (pure-JVM callers)
-     * skips the blocks rather than fabricating metadata.
+     * `session.attachment` resolves. Context is REQUIRED: callers that omit
+     * it silently drop every image block (that was the live/history break).
      */
-    private fun resolveImageRefs(context: Context?, sessionId: String, message: JSONObject): JSONArray? {
+    internal fun resolveImageRefs(context: Context?, sessionId: String, message: JSONObject): JSONArray? {
         val refs = message.optJSONArray("imageRefs") ?: return null
         if (refs.length() == 0 || context == null) return null
         val blocks = JSONArray()
@@ -979,14 +983,35 @@ object DshApiAdapter {
             .ifEmpty { guessMimeByName(file.name) ?: "image/png" }
         if (!mediaType.startsWith("image/")) return null
         val bounds = imageBounds(file)
-        return JSONObject().apply {
-            put("attachmentId", attachmentId)
-            put("mediaType", mediaType)
-            put("bytes", file.length().coerceAtLeast(1))
-            put("width", (bounds?.first ?: 1).coerceAtLeast(1))
-            put("height", (bounds?.second ?: 1).coerceAtLeast(1))
-            ref.optString("originalFileName", "").takeIf { it.isNotEmpty() }?.let { put("name", it) }
-        }
+        return imageAttachmentProto(
+            attachmentId = attachmentId,
+            mediaType = mediaType,
+            bytes = file.length(),
+            width = bounds?.first ?: 1,
+            height = bounds?.second ?: 1,
+            name = ref.optString("originalFileName", "").takeIf { it.isNotEmpty() },
+        )
+    }
+
+    /**
+     * Pure `imageAttachmentRefSchema` shape (client.js:5423): every integer
+     * is positive, `name` optional. Divorced from Android file/bitmap APIs so
+     * JVM tests can pin the wire contract exactly.
+     */
+    internal fun imageAttachmentProto(
+        attachmentId: String,
+        mediaType: String,
+        bytes: Long,
+        width: Int,
+        height: Int,
+        name: String?,
+    ): JSONObject = JSONObject().apply {
+        put("attachmentId", attachmentId)
+        put("mediaType", mediaType)
+        put("bytes", bytes.coerceAtLeast(1L))
+        put("width", width.coerceAtLeast(1))
+        put("height", height.coerceAtLeast(1))
+        if (!name.isNullOrEmpty()) put("name", name)
     }
 
     private fun guessMimeByName(name: String): String? = when (name.substringAfterLast('.', "").lowercase()) {
@@ -2639,8 +2664,9 @@ object DshApiAdapter {
     /**
      * sessionAttachmentValueSchema (client.js:5438) —
      * `{ attachment: imageAttachmentRefSchema, data: string }` where `data` is
-     * the raw byte array (the browser wraps it in Uint8Array.from, so this is
-     * a JSON array of 0-255 integers, NOT base64).
+     * a standard base64 STRING: the DSH client validates it with `string()`
+     * and the runtime decodes it with `atob()` (client.js:7271) before the
+     * conversation UI wraps it in a Blob. A byte array would fail both.
      *
      * Security: the attachment must be referenced by a message of the
      * requested session — knowing an attachmentId must never leak an image
@@ -2662,11 +2688,21 @@ object DshApiAdapter {
         val metadata = dshImageAttachment(attachmentId, file, ref)
             ?: throw IllegalArgumentException("attachment is not a supported image")
         val bytes = file.readBytes()
-        val data = JSONArray().apply { for (b in bytes) put(b.toInt() and 0xFF) }
+        val data = encodeAttachmentData(bytes)
         return JSONObject()
             .put("attachment", metadata)
             .put("data", data)
     }
+
+    /**
+     * DSH `session.attachment` `data` wire format: standard base64.
+     * `dsh-client-runtime` decodes it with `atob()` and the conversation UI
+     * then builds a Blob from the resulting bytes. Pure JVM so the protocol
+     * contract is unit-testable (minSdk 26; java.util.Base64 is the
+     * no-wrap, atob-compatible encoder).
+     */
+    internal fun encodeAttachmentData(bytes: ByteArray): String =
+        java.util.Base64.getEncoder().encodeToString(bytes)
 
     /**
      * Find the MediaRef for [attachmentId] among messages of [sessionId]

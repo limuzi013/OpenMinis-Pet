@@ -2,6 +2,31 @@
 
 版本变更从 `1.01-beta` 开始记录。早期开发史不在此处,以 Git 历史为准。
 
+## [1.01-beta.1] — 2026-08-23
+
+修复轮:Web 图片链路两处阻断、原生 DSH 统计投影定稿,并补齐 App/Web 图片协议测试。
+
+### 图片(Web↔App 同一 MediaStore 权威源)
+
+- **修复 live/history image block 死代码**:`nativeEventToMuxFrame` 全部调用点(history +
+  两个 mux 推送路径)现在传入宿主 context,`resolveImageRefs` 不再因 context 为 null 而
+  丢弃所有图片块;
+- **修复 `session.attachment` 协议**:`data` 从 0-255 整数数组改为标准 base64 字符串,
+  符合 bundled DSH 的 `data: string()` schema 与 runtime `atob()` 解码;
+- 抽出可单测的 `imageAttachmentProto` / `encodeAttachmentData`,新增 `DshImageBlockTest`
+  (7 用例,全部通过);
+- 其余管线(MediaRef 持久化、attachmentId==MediaRef.id、legacy backfill)沿用 1.01-beta 实现。
+
+### Stats
+
+- 沿 1.01-beta 的 `sessionStats`/`tokenUsage` 投影,本轮仅验证与 bundled DSH StatsLine
+  字段逐项一致(原始整数,不预格式化)。
+
+### 测试
+
+- `DshImageBlockTest` 7/7、`DshSessionStatsTest` 6/6、`com.openminis.app.remote.*` 全部通过;
+- 全量单测仅 14 个既有 OpenAI MockWebServer 环境基线失败(与本次改动无关)。
+
 ## [1.01-beta] — 2026-08-23
 
 首个公开版本,Android arm64 开发/自测构建。详见 [RELEASE-NOTES.md](RELEASE-NOTES.md)。

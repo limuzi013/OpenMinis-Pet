@@ -28,19 +28,19 @@ Android 原生 App（唯一运行时与数据源）
 
 | 项目 | 值 |
 |---|---|
-| Release | [`v1.01-beta`](https://github.com/limuzi013/minis-for-android/releases/tag/v1.01-beta) |
-| Android 版本 | `1.01-beta`(versionCode 37) |
+| Release | [`v1.01-beta.1`](https://github.com/limuzi013/minis-for-android/releases/tag/v1.01-beta.1) |
+| Android 版本 | `1.01-beta.1`(versionCode 38) |
 | applicationId | `dev.openminispet.android` |
 | ABI | `arm64-v8a` |
-| APK | `OpenMinis-Pet-1.01-beta-arm64-debug.apk` |
-| 大小 | `54478422` bytes |
-| SHA-256 | `388a843bbb63c4f6d6c5373fde4656330651d5ed27a2d499caa4e966e697f909` |
+| APK | `OpenMinis-Pet-1.01-beta.1-arm64-debug.apk` |
+| 大小 | `54478634` bytes |
+| SHA-256 | `b76277d7956c41dfffcb28edcecfcb71e546df4b8356a9e16abfeb02eae6d147` |
 
 **当前 APK 使用 Android Debug 签名,仅供开发、自测与源码对应验证,不是生产发布包。**
 生产分发必须关闭 DebugServer、改用长期保管的 release keystore,并完成独立安全验收。
 
-- [下载 APK](https://github.com/limuzi013/minis-for-android/releases/download/v1.01-beta/OpenMinis-Pet-1.01-beta-arm64-debug.apk)
-- [查看对应源码](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta)
+- [下载 APK](https://github.com/limuzi013/minis-for-android/releases/download/v1.01-beta.1/OpenMinis-Pet-1.01-beta.1-arm64-debug.apk)
+- [查看对应源码](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta.1)
 - [发布说明](RELEASE-NOTES.md)
 
 ## 主要功能

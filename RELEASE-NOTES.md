@@ -1,4 +1,34 @@
-# Minis for Android `v1.01-beta`
+# Minis for Android `v1.01-beta.1`
+
+发布日期:2026-08-23。**1.01-beta 的修复轮**,Android arm64 开发/自测构建,与 tag [`v1.01-beta.1`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta.1) 源码对应。
+
+## 下载与校验
+
+- APK：[`OpenMinis-Pet-1.01-beta.1-arm64-debug.apk`](https://github.com/limuzi013/minis-for-android/releases/download/v1.01-beta.1/OpenMinis-Pet-1.01-beta.1-arm64-debug.apk)
+- applicationId：`dev.openminispet.android`
+- ABI：`arm64-v8a` · versionCode 38
+
+```bash
+sha256sum OpenMinis-Pet-1.01-beta.1-arm64-debug.apk
+# b76277d7956c41dfffcb28edcecfcb71e546df4b8356a9e16abfeb02eae6d147
+```
+
+## 本轮修复
+
+1. **Web 图片回显**:live/history 两个 `nativeEventToMuxFrame` 推送路径与 `session.history`
+   均传入宿主 context,DSH 消息真正携带 `{type:image, attachment}` 块;`session.attachment`
+   的 `data` 改为 base64 字符串,通过 DSH 严格 schema 校验与 runtime `atob()` 解码;
+2. **持久化**:相同 MediaRef(MediaStore)同时驱动 App 气泡与 Web 历史,刷新/重启后图片可恢复;
+3. **原生统计**:`session.history` projections 提供 `sessionStats`(journal 边界事件 fold)与
+   `tokenUsage`(Room 全会话聚合),DSH 原生 StatsLine 直接消费原始整数;
+4. **双向状态**:`agent.sessionPermission.get/set` 与 `/permission` 共用 `SessionPermissionStore`,并
+   发出 `permission/preset`、`sandbox/mode`、`approval/policy` 事件(DApp/Web 同一投影);
+5. **测试**:新增 `DshImageBlockTest` 7 用例;`DshSessionStatsTest` 6 用例继续通过;
+   remote 包全量通过;全量单测 779 中仅 14 个既有 OpenAI MockWebServer 环境基线失败。
+
+---
+
+# v1.01-beta(历史版本)
 
 发布日期:2026-08-23。这是项目的 **1.01-beta 首个公开版本**,Android arm64 开发/自测构建,与 tag [`v1.01-beta`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta) 源码对应。
 
