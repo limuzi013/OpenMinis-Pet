@@ -1,19 +1,28 @@
-# Minis for Android `v1.00-beta`
+# Minis for Android `v1.01-beta`
 
-发布日期:2026-08-23。这是项目的 **1.00-beta 首个公开版本**,Android arm64 开发/自测构建,与 tag [`v1.00-beta`](https://github.com/limuzi013/minis-for-android/tree/v1.00-beta) 源码对应。
+发布日期:2026-08-23。这是项目的 **1.01-beta 首个公开版本**,Android arm64 开发/自测构建,与 tag [`v1.01-beta`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta) 源码对应。
 
 ## 下载与校验
 
-- APK：[`OpenMinis-Pet-1.00-beta-arm64-debug.apk`](https://github.com/limuzi013/minis-for-android/releases/download/v1.00-beta/OpenMinis-Pet-1.00-beta-arm64-debug.apk)
+- APK：[`OpenMinis-Pet-1.01-beta-arm64-debug.apk`](https://github.com/limuzi013/minis-for-android/releases/download/v1.01-beta/OpenMinis-Pet-1.01-beta-arm64-debug.apk)
 - applicationId：`dev.openminispet.android`
-- versionName：`1.00-beta`
-- versionCode：36
+- versionName：`1.01-beta`
+- versionCode：37
 - ABI：`arm64-v8a`
-- 大小：`54949540` bytes
-- SHA-256：`bb017abb06c5ca20c3d072fc728e1c2a2f6f321819cb426a2171ed48d6dcb359`
+- 大小：`54478422` bytes
+- SHA-256：`388a843bbb63c4f6d6c5373fde4656330651d5ed27a2d499caa4e966e697f909`
 - 签名：Android Debug keystore；APK Signature Scheme v2
 
 ## 主要变化
+
+### 1.01-beta 新增
+
+- **图片全链路**:Web 发送的图片进入 Android MediaStore 权威附件体系(ContentPart.MediaRef),DSH 消息以 `image` block 输出并可通过 `session.attachment` 解析(字节数组 + 宽高),live/history/legacy backfill 全覆盖;跨会话引用被拒绝。
+- **DSH 原生底部统计栏**:`session.history` projections 提供真实 `sessionStats`(turns/steps/llmMs/ttft/toolMs/decode,由 native journal 边界事件折叠)与 `tokenUsage`(Room token_usage 权威聚合),不做前端假 footer。
+- **双端权限互通**:Session Agent 执行权限(`SessionPermissionStore`)与 Web Remote capability(`RemotePermissionPolicy`/`RemoteCapabilityCatalog`)分离;`agent.sessionPermission.get/set` RPC 与 `/permission` 命令共用同一 Android 权威源,均发出 permission/preset + sandbox/mode + approval/policy 事件驱动 DSH permissions projection。
+- versionName `1.01-beta` / versionCode 37。
+
+### 1.00-beta 内容
 
 ### Minis Web 成为正式 Harness Client Plugin
 

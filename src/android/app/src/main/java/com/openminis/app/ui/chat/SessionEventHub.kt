@@ -792,6 +792,20 @@ internal class ChatSessionEventEmitter(
             put("isStreaming", message.isStreaming)
             put("isAwaitingModelResponse", message.isAwaitingModelResponse)
             if (message.attachmentNames.isNotEmpty()) put("attachments", JSONArray(message.attachmentNames))
+            if (message.imageRefs.isNotEmpty()) {
+                // Canonical MediaRefs (MediaStore) so the DSH projection can
+                // build durable image blocks and resolve them via session.attachment.
+                val refs = JSONArray()
+                for (ref in message.imageRefs) {
+                    refs.put(JSONObject().apply {
+                        put("id", ref.id)
+                        put("relativePath", ref.relativePath)
+                        put("mimeType", ref.mimeType)
+                        ref.originalFileName?.let { put("originalFileName", it) }
+                    })
+                }
+                put("imageRefs", refs)
+            }
             if (message.error != null) put("error", message.error)
         }
         when (message.role) {

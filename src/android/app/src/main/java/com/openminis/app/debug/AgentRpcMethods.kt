@@ -23,6 +23,48 @@ internal object AgentRpcMethods {
         put("timeoutMinutes", SubagentLimits.timeoutMs(context) / 60_000L)
     }
 
+    /**
+     * Per-session Agent execution permission (DSH /permission state). This is
+     * the Agent-runtime layer — deliberately distinct from RemotePermissionPolicy
+     * which gates what a *browser* may invoke.
+     */
+    fun sessionPermissionGet(context: Context, params: JSONObject): JSONObject {
+        val sessionId = params.optString("sessionId", "").ifEmpty {
+            throw RPCException(-32602, "Missing 'sessionId' param")
+        }
+        return JSONObject().apply {
+            put("sessionId", sessionId)
+            com.openminis.app.tools.SessionPermissionStore.preset(context, sessionId)
+                ?.let { put("preset", it) }
+                ?: put("preset", JSONObject.NULL)
+        }
+    }
+
+    fun sessionPermissionSet(context: Context, params: JSONObject): JSONObject {
+        val sessionId = params.optString("sessionId", "").ifEmpty {
+            throw RPCException(-32602, "Missing 'sessionId' param")
+        }
+        val preset = params.optString("preset", "").ifEmpty { null }
+        if (preset != null && !com.openminis.app.tools.SessionPermissionStore.isKnownPreset(preset)) {
+            throw RPCException(-32602, "preset must be workspace-write | danger-full-access | null")
+        }
+        com.openminis.app.tools.SessionPermissionStore.setPreset(context, sessionId, preset)
+        // Same three events the /permission command emits, so the DSH
+        // permissions projection (App and Web) sees one state.
+        val effective = preset ?: com.openminis.app.tools.SessionPermissionStore.WORKSPACE_WRITE
+        val sandboxMode = if (effective == com.openminis.app.tools.SessionPermissionStore.DANGER_FULL_ACCESS)
+            "danger-full-access" else "workspace-write"
+        val approvalPolicy = if (effective == com.openminis.app.tools.SessionPermissionStore.DANGER_FULL_ACCESS)
+            "never" else "ask"
+        com.openminis.app.ui.chat.SessionEventHub.append(sessionId, "permission/preset", JSONObject().put("preset", effective))
+        com.openminis.app.ui.chat.SessionEventHub.append(sessionId, "sandbox/mode", JSONObject().put("mode", sandboxMode))
+        com.openminis.app.ui.chat.SessionEventHub.append(sessionId, "approval/policy", JSONObject().put("policy", approvalPolicy))
+        return JSONObject().apply {
+            put("sessionId", sessionId)
+            if (preset != null) put("preset", preset) else put("preset", JSONObject.NULL)
+        }
+    }
+
     fun approvalsList(context: Context, params: JSONObject): JSONObject {
         val sessionId = params.optString("sessionId", "").ifEmpty { null }
         val arr = JSONArray()

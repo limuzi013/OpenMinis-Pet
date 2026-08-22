@@ -113,6 +113,11 @@ data class ChatMessage(
     val isAwaitingModelResponse: Boolean = false,
     val imageUris: List<Uri> = emptyList(),
     val attachmentNames: List<String> = emptyList(),
+    // T-web-img: canonical MediaRefs of the persisted image attachments, in
+    // the same order as imageUris. Carried into the session event journal so
+    // the DSH Web projection can emit durable image blocks and resolve them
+    // through session.attachment. Null/empty for queued (not yet persisted).
+    val imageRefs: List<com.openminis.app.data.model.MediaRef> = emptyList(),
     // T150: file:// URIs of non-image attachments that the user bubble's
     // file chip taps into FilePreviewScreen. Aligned with the non-image
     // suffix of `attachmentNames` (after the imageUris-many image entries).

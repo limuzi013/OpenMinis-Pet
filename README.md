@@ -1,7 +1,7 @@
 # Minis for Android
 
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://github.com/limuzi013/minis-for-android/releases)
-[![Release](https://img.shields.io/badge/release-v1.00--beta-blue)](https://github.com/limuzi013/minis-for-android/releases/tag/v1.00-beta)
+[![Release](https://img.shields.io/badge/release-v1.00--beta-blue)](https://github.com/limuzi013/minis-for-android/releases/tag/v1.01-beta)
 [![ABI](https://img.shields.io/badge/ABI-arm64--v8a-orange)](#安装)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
@@ -28,19 +28,19 @@ Android 原生 App（唯一运行时与数据源）
 
 | 项目 | 值 |
 |---|---|
-| Release | [`v1.00-beta`](https://github.com/limuzi013/minis-for-android/releases/tag/v1.00-beta) |
-| Android 版本 | `1.00-beta`(versionCode 36) |
+| Release | [`v1.01-beta`](https://github.com/limuzi013/minis-for-android/releases/tag/v1.01-beta) |
+| Android 版本 | `1.01-beta`(versionCode 37) |
 | applicationId | `dev.openminispet.android` |
 | ABI | `arm64-v8a` |
-| APK | `OpenMinis-Pet-1.00-beta-arm64-debug.apk` |
-| 大小 | `54949540` bytes |
-| SHA-256 | `bb017abb06c5ca20c3d072fc728e1c2a2f6f321819cb426a2171ed48d6dcb359` |
+| APK | `OpenMinis-Pet-1.01-beta-arm64-debug.apk` |
+| 大小 | `54478422` bytes |
+| SHA-256 | `388a843bbb63c4f6d6c5373fde4656330651d5ed27a2d499caa4e966e697f909` |
 
 **当前 APK 使用 Android Debug 签名,仅供开发、自测与源码对应验证,不是生产发布包。**
 生产分发必须关闭 DebugServer、改用长期保管的 release keystore,并完成独立安全验收。
 
-- [下载 APK](https://github.com/limuzi013/minis-for-android/releases/download/v1.00-beta/OpenMinis-Pet-1.00-beta-arm64-debug.apk)
-- [查看对应源码](https://github.com/limuzi013/minis-for-android/tree/v1.00-beta)
+- [下载 APK](https://github.com/limuzi013/minis-for-android/releases/download/v1.01-beta/OpenMinis-Pet-1.01-beta-arm64-debug.apk)
+- [查看对应源码](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta)
 - [发布说明](RELEASE-NOTES.md)
 
 ## 主要功能
@@ -136,7 +136,7 @@ Android 手机内核 → OpenMinis App UID → PRoot → Alpine rootfs
 要求 Android 8.0(API 26)或更高版本的 arm64 设备。
 
 ```bash
-adb install -r OpenMinis-Pet-1.00-beta-arm64-debug.apk
+adb install -r OpenMinis-Pet-1.01-beta-arm64-debug.apk
 ```
 
 首次使用建议:
@@ -186,12 +186,12 @@ Minis Web Client Plugin 单独构建:`cd web/minis-client-plugin && npm install 
 | `deps/` | PRoot submodule 与原生依赖构建脚本 |
 | `releases/` | 明确发布且与源码对应的 APK |
 | [`docs/README.md`](docs/README.md) | 文档索引 |
-| [`CHANGELOG.md`](CHANGELOG.md) | 版本变更记录(自 1.00-beta 起) |
+| [`CHANGELOG.md`](CHANGELOG.md) | 版本变更记录(自 1.01-beta 起) |
 | [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) | 第三方许可证与来源 |
 
 ## 起源与许可证
 
-本项目作为独立项目发布,首版为 `v1.00-beta`。其代码谱系包含:
+本项目作为独立项目发布,首版为 `v1.01-beta`。其代码谱系包含:
 
 - [OpenMinis](https://github.com/OpenMinis/OpenMinis)(GPL-3.0,派生基础);
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) `0.1.0-rc.8`

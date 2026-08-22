@@ -254,6 +254,8 @@ class DebugRPCHandler(private val context: Context) {
             // Agent settings (main/sub agent knobs for the Web Remote)
             "agent.settings.get" -> AgentRpcMethods.settingsGet(context)
             "agent.settings.set" -> AgentRpcMethods.settingsSet(context, params)
+            "agent.sessionPermission.get" -> AgentRpcMethods.sessionPermissionGet(context, params)
+            "agent.sessionPermission.set" -> AgentRpcMethods.sessionPermissionSet(context, params)
 
             // Debug-only: direct CLI / offload-handler invocation (T344).
             // Registered solely on DEBUG builds so release APKs cannot expose it.

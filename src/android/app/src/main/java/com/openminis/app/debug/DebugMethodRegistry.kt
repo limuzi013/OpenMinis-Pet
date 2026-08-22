@@ -1301,6 +1301,29 @@ object DebugMethodRegistry {
             returns = "{ok:true, maxDepth, timeoutMinutes}",
             example = ex("maxDepth" to 3, "timeoutMinutes" to 10),
         ),
+        MethodSpec(
+            name = "agent.sessionPermission.get",
+            description = "Return one session's Agent execution permission preset (DSH /permission state). " +
+                "Distinct from Remote permission capabilities: this gates what the Agent can do, " +
+                "not what a browser may invoke.",
+            params = listOf(
+                ParamSpec("sessionId", "string", required = true, description = "Chat session id."),
+            ),
+            returns = "{sessionId, preset|null}",
+            example = ex("sessionId" to "sess-1"),
+        ),
+        MethodSpec(
+            name = "agent.sessionPermission.set",
+            description = "Set one session's Agent execution permission preset (workspace-write | " +
+                "danger-full-access | null to clear). Emits permission/preset + sandbox/mode + " +
+                "approval/policy session events so the DSH permissions projection updates.",
+            params = listOf(
+                ParamSpec("sessionId", "string", required = true, description = "Chat session id."),
+                ParamSpec("preset", "string", required = true, description = "preset id or null."),
+            ),
+            returns = "{sessionId, preset}",
+            example = ex("sessionId" to "sess-1", "preset" to "workspace-write"),
+        ),
 
         // ── Agent bars: goal / todo / plan / deliverables ───────────────────
         MethodSpec(

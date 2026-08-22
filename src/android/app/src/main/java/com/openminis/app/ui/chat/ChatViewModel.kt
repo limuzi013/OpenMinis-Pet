@@ -5758,6 +5758,7 @@ class ChatViewModel(
                 role = "user",
                 content = trimmed,
                 imageUris = prepared.imageUris,
+                imageRefs = prepared.imageRefs,
                 attachmentNames = prepared.attachmentNames,
                 attachmentUris = prepared.nonImageUris,
             )
@@ -9747,6 +9748,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
     private data class PreparedAttachments(
         val imageParts: List<LLMMessage.ImagePart>,
         val imageUris: List<Uri>,
+        val imageRefs: List<com.openminis.app.data.model.MediaRef>,
         val attachmentNames: List<String>,
         val mediaRefPartsJson: List<String>,
         // T132: iOS-parity additions so the model sees the attachment as
@@ -9781,6 +9783,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
     ): PreparedAttachments {
         val imageParts = mutableListOf<LLMMessage.ImagePart>()
         val imageUris = mutableListOf<Uri>()
+        val imageMediaRefs = mutableListOf<com.openminis.app.data.model.MediaRef>()
         val imageNames = mutableListOf<String>()
         val nonImageNames = mutableListOf<String>()
         val nonImageUris = mutableListOf<Uri>()
@@ -9838,6 +9841,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     Log.e(TAG, "Failed to persist image attachment ${attachment.fileName}", e)
                     continue
                 }
+                imageMediaRefs.add(ref)
                 // Resize only for the LLM payload — token-efficient and a
                 // close-enough sketch of the picture for the model. Falls
                 // back to raw bytes if the source is already small or the
@@ -9989,6 +9993,7 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         return PreparedAttachments(
             imageParts = imageParts,
             imageUris = imageUris,
+            imageRefs = imageMediaRefs.toList(),
             attachmentNames = imageNames + nonImageNames,
             mediaRefPartsJson = imageMediaRefPartsJson + nonImageMediaRefPartsJson,
             imageUploadPaths = imageUploadPaths,

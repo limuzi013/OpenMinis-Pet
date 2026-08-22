@@ -212,6 +212,7 @@ object RemoteCapabilityCatalog {
             "agent.approval.list", "agent.approval.answer",
             "agent.jobs.list", "agent.jobs.cancel",
             "agent.settings.get", "agent.settings.set",
+            "agent.sessionPermission.get", "agent.sessionPermission.set",
         )) put(m, AGENT_MANAGE)
 
         put("settings.permissionPreset.get", PERMISSION_MANAGE)

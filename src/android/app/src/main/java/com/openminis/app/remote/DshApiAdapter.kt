@@ -88,9 +88,8 @@ object DshApiAdapter {
             // sessionUpdateQueueValueSchema (client.js:5453) — `{ accepted: true }`.
             "session.updateQueue" -> JSONObject().put("accepted", true)
             // Prompt image parts are accepted directly by session.prompt. This
-            // lookup method is only for a durable upstream attachment id, which
-            // OpenMinis does not persist under that foreign id model.
-            "session.attachment" -> throw IllegalArgumentException("该历史图片没有可读取的 Minis 附件引用")
+            // lookup method resolves durable MediaStore refs (MediaRef.id).
+            "session.attachment" -> sessionAttachment(context, payload)
 
             "host.describe" -> hostDescribe(context)
             "host.listDirectory" -> hostListDirectory(context, payload)
@@ -231,6 +230,8 @@ object DshApiAdapter {
         title: String,
         modelName: String,
         sessionId: String = "",
+        stats: JSONObject? = null,
+        usage: JSONObject? = null,
     ): JSONObject = JSONObject().apply {
         put("asOfSeq", -1)
         put("values", JSONObject().apply {
@@ -241,6 +242,8 @@ object DshApiAdapter {
                     .put("model", modelName))
             }
             goalProjection(sessionId)?.let { put("goal", it) }
+            stats?.let { put("sessionStats", it) }
+            usage?.let { put("tokenUsage", it) }
         })
     }
 
@@ -371,12 +374,145 @@ object DshApiAdapter {
             put("events", events)
             put("hasMore", start > 0)
             if (isTailPage) {
-                put("projections", projectionsBlock(title, modelName, sid).apply {
+                val usageProjection = tokenUsageProjection(context, sid)
+                val statsProjection = sessionStatsProjection(context, sid)
+                if (statsProjection != null && usageProjection != null) {
+                    // decodeTokens == whole-session output tokens; the journal
+                    // usage samples are per-step snapshots, DB rows are the
+                    // final authoritative totals.
+                    statsProjection.put("decodeTokens", usageProjection.optLong("outputTokens", 0L))
+                }
+                put("projections", projectionsBlock(
+                    title,
+                    modelName,
+                    sid,
+                    stats = statsProjection,
+                    usage = usageProjection,
+                ).apply {
                     put("asOfSeq", watermark.latestSeq.coerceAtLeast(-1L))
                     optJSONObject("values")?.put("agentRunning", running)
                 })
             }
         }
+    }
+
+    // ------------------------------------------------------------ projections
+
+    /**
+     * DSH `sessionStats` projection — real numbers from the native journal:
+     * turns/steps from turn/assistant boundaries, llmMs from placeholder→
+     * settled message, TTFT from first token delta, toolMs from tool/call→
+     * tool/result, decode from first token → settle. Raw integer values only
+     * (the browser formats them; StatsLine computes TTFT avg and tok/s).
+     */
+    private suspend fun sessionStatsProjection(context: Context, sessionId: String): JSONObject? = try {
+        val replay = HeadlessChatRunner.sessionEvents(context, sessionId, null)
+        if (replay.events.isEmpty()) null else computeSessionStats(replay.events)
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Pure stats fold over native journal events (JVM-testable). Mirrors the
+     * DSH fixture's `sessionStatsOf` semantics using the boundary events the
+     * runtime actually emits: assistant/placeholder (LLM start),
+     * assistant/chunk first token delta (TTFT), assistant/message (settle),
+     * tool/call → tool/result (toolMs), turn/end (turns).
+     */
+    internal fun computeSessionStats(events: List<com.openminis.app.ui.chat.SessionEvent>): JSONObject {
+        var turns = 0
+        var steps = 0
+        var llmMs = 0L
+        var toolMs = 0L
+        var ttftMs = 0L
+        var ttftSteps = 0
+        var decodeMs = 0L
+        var decodeTokens = 0L
+        var openStepStart: Long? = null
+        var firstTokenTime: Long? = null
+        val pendingCalls = HashMap<String, Long>()
+        for (event in events) {
+            val data = event.data()
+            when (event.type) {
+                "assistant/placeholder" -> {
+                    openStepStart = event.time
+                    firstTokenTime = null
+                }
+                "assistant/chunk" -> {
+                    if (openStepStart == null || firstTokenTime != null) continue
+                    val chunk = data.optJSONObject("chunk") ?: continue
+                    val kind = chunk.optString("type")
+                    if (kind == "text-delta" || kind == "reasoning-delta") {
+                        firstTokenTime = event.time
+                    }
+                }
+                "assistant/message" -> {
+                    openStepStart?.let { start ->
+                        llmMs += (event.time - start).coerceAtLeast(0L)
+                        firstTokenTime?.let { first ->
+                            ttftMs += (first - start).coerceAtLeast(0L)
+                            ttftSteps++
+                            decodeMs += (event.time - first).coerceAtLeast(0L)
+                        }
+                    }
+                    data.optJSONObject("usage")?.optLong("outputTokens", 0L)
+                        ?.takeIf { it > 0 }?.let { decodeTokens += it }
+                    openStepStart = null
+                    firstTokenTime = null
+                    steps++
+                }
+                "tool/call" -> {
+                    val call = data.optJSONObject("call") ?: JSONObject()
+                    val callId = call.optString("callId", "")
+                        .ifEmpty { call.optString("toolUseId", "") }
+                        .ifEmpty { call.optString("id", "") }
+                    if (callId.isNotEmpty()) pendingCalls[callId] = event.time
+                }
+                "tool/result" -> {
+                    val call = data.optJSONObject("call") ?: JSONObject()
+                    val callId = call.optString("callId", "")
+                        .ifEmpty { call.optString("toolUseId", "") }
+                        .ifEmpty { call.optString("id", "") }
+                    pendingCalls.remove(callId)?.let { toolMs += (event.time - it).coerceAtLeast(0L) }
+                }
+                "turn/end" -> {
+                    turns++
+                    pendingCalls.clear()
+                }
+                else -> Unit
+            }
+        }
+        return JSONObject().apply {
+            put("turns", turns)
+            put("steps", steps)
+            put("llmMs", llmMs)
+            put("toolMs", toolMs)
+            put("ttftMs", ttftMs)
+            put("ttftSteps", ttftSteps)
+            put("decodeMs", decodeMs)
+            put("decodeTokens", decodeTokens)
+        }
+    }
+
+    /**
+     * DSH `tokenUsage` projection — one whole-session aggregate from the
+     * authoritative per-message token_usage rows (Room), never from the
+     * browser's visible window: `{ uncachedInputTokens, outputTokens,
+     * cacheReadTokens, cacheWriteTokens }`.
+     */
+    private suspend fun tokenUsageProjection(context: Context, sessionId: String): JSONObject? = try {
+        val raw = ChatDebugMethods.sessionsUsage(
+            context, JSONObject().put("sessionId", sessionId),
+        )
+        val totals = raw.optJSONObject("totals") ?: return null
+        JSONObject().apply {
+            put("uncachedInputTokens", totals.optLong("inputTokens", 0L))
+            put("outputTokens", totals.optLong("outputTokens", 0L))
+            put("cacheReadTokens", totals.optLong("cacheReadTokens", 0L))
+            put("cacheWriteTokens", totals.optLong("cacheCreationTokens", 0L))
+        }
+    } catch (e: Exception) {
+        null
     }
 
     /**
@@ -463,6 +599,26 @@ object DshApiAdapter {
                         .put("role", "user")
                         .put("content", text)
                     source.optJSONArray("attachments")?.let { message.put("attachments", JSONArray(it.toString())) }
+                    // Durable mediaRef parts (persisted image refs) become
+                    // DSH imageRefs so legacy backfill also renders images.
+                    val refs = JSONArray()
+                    source.optJSONArray("parts")?.let { parts ->
+                        for (i in 0 until parts.length()) {
+                            val part = parts.optJSONObject(i) ?: continue
+                            if (part.optString("type") != "mediaRef") continue
+                            val value = part.optJSONObject("value") ?: continue
+                            val id = value.optString("id", "")
+                            if (id.isEmpty() || !value.optString("mimeType", "").startsWith("image/")) continue
+                            refs.put(JSONObject().apply {
+                                put("id", id)
+                                put("relativePath", value.optString("relativePath", ""))
+                                put("mimeType", value.optString("mimeType", ""))
+                                value.optString("originalFileName", "").takeIf { it.isNotEmpty() }
+                                    ?.let { put("originalFileName", it) }
+                            })
+                        }
+                    }
+                    if (refs.length() > 0) message.put("imageRefs", refs)
                     SessionEventHub.append(
                         sessionId,
                         "user/message",
@@ -625,7 +781,7 @@ object DshApiAdapter {
      * `{ type, seq, time, data }`, so unknown types parse cleanly and DSH
      * ignores the ones it has no fold for.
      */
-    fun nativeEventToMuxFrame(sessionId: String, event: JSONObject): JSONObject {
+    fun nativeEventToMuxFrame(sessionId: String, event: JSONObject, context: Context? = null): JSONObject {
         val type = event.optString("type")
         val seq = event.optLong("seq")
         val time = event.optLong("time")
@@ -633,12 +789,12 @@ object DshApiAdapter {
 
         val translated: JSONObject? = when (type) {
             "user/message" -> data.optJSONObject("message")?.let { native ->
-                val message = nativeMessageToDsh(native, "user", "user")
+                val message = nativeMessageToDsh(native, "user", "user", context, sessionId)
                 copyTurnStep(data, message)
                 dshEvent("user/message", seq, time, message)
             }
             "system/message" -> data.optJSONObject("message")?.let { native ->
-                val message = nativeMessageToDsh(native, "system", "system")
+                val message = nativeMessageToDsh(native, "system", "system", context, sessionId)
                 copyTurnStep(data, message)
                 dshEvent("user/message", seq, time, message)
             }
@@ -763,6 +919,8 @@ object DshApiAdapter {
         message: JSONObject,
         role: String,
         sourceKind: String,
+        context: Context? = null,
+        sessionId: String = "",
     ): JSONObject {
         val content = JSONArray()
         when (val raw = if (message.has("content")) message.get("content") else "") {
@@ -772,8 +930,91 @@ object DshApiAdapter {
             is String -> if (raw.isNotEmpty()) content.put(textBlock(raw))
             else -> {}
         }
+        // Canonical MediaRefs first: durable DSH image blocks.
+        resolveImageRefs(context, sessionId, message)?.let { content.put(it) }
+        // Legacy attachment names only (documents/files) fall back to notes.
         appendAttachmentNotes(content, message.optJSONArray("attachments"))
         return dshMessage(message.optString("id", "msg_$role"), role, content, sourceKind)
+    }
+
+    /**
+     * Build DSH `image` content blocks for a native message's canonical
+     * MediaRefs. Each block carries the durable attachment ref
+     * `{ attachmentId, mediaType, bytes, width, height, name? }` that
+     * `session.attachment` resolves. Missing/null context (pure-JVM callers)
+     * skips the blocks rather than fabricating metadata.
+     */
+    private fun resolveImageRefs(context: Context?, sessionId: String, message: JSONObject): JSONArray? {
+        val refs = message.optJSONArray("imageRefs") ?: return null
+        if (refs.length() == 0 || context == null) return null
+        val blocks = JSONArray()
+        for (i in 0 until refs.length()) {
+            val ref = refs.optJSONObject(i) ?: continue
+            dshImageBlock(context, sessionId, ref)?.let { blocks.put(it) }
+        }
+        return if (blocks.length() == 0) null else blocks
+    }
+
+    /** One DSH image block for a MediaRef; null when the file is unreadable. */
+    private fun dshImageBlock(context: Context, sessionId: String, ref: JSONObject): JSONObject? = try {
+        val relativePath = ref.optString("relativePath", "")
+        if (relativePath.isEmpty()) null
+        else {
+            val file = File(com.openminis.app.data.storage.MediaStore(context).mediaBaseDir, relativePath)
+            if (!file.exists() || !file.isFile) null
+            else {
+                val attachment = dshImageAttachment(ref.optString("id", ""), file, ref)
+                if (attachment == null) null
+                else JSONObject().put("type", "image").put("attachment", attachment)
+            }
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** `imageAttachmentRefSchema` (client.js:5422) — bytes is the file size. */
+    private fun dshImageAttachment(attachmentId: String, file: File, ref: JSONObject): JSONObject? {
+        if (attachmentId.isEmpty()) return null
+        val mediaType = ref.optString("mimeType", "")
+            .ifEmpty { guessMimeByName(file.name) ?: "image/png" }
+        if (!mediaType.startsWith("image/")) return null
+        val bounds = imageBounds(file)
+        return JSONObject().apply {
+            put("attachmentId", attachmentId)
+            put("mediaType", mediaType)
+            put("bytes", file.length().coerceAtLeast(1))
+            put("width", (bounds?.first ?: 1).coerceAtLeast(1))
+            put("height", (bounds?.second ?: 1).coerceAtLeast(1))
+            ref.optString("originalFileName", "").takeIf { it.isNotEmpty() }?.let { put("name", it) }
+        }
+    }
+
+    private fun guessMimeByName(name: String): String? = when (name.substringAfterLast('.', "").lowercase()) {
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        else -> null
+    }
+
+    /** Decode image dimensions without loading the full pixel data. */
+    private val imageBoundsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, Int>>()
+
+    private fun imageBounds(file: File): Pair<Int, Int>? {
+        val key = "${file.absolutePath}:${file.length()}"
+        imageBoundsCache[key]?.let { return it }
+        return try {
+            val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath, opts)
+            if (opts.outWidth > 0 && opts.outHeight > 0) {
+                val bounds = opts.outWidth to opts.outHeight
+                if (imageBoundsCache.size > 512) imageBoundsCache.clear()
+                imageBoundsCache[key] = bounds
+                bounds
+            } else null
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /** Native assistant message: Anthropic block names into DSH block names. */
@@ -2391,6 +2632,85 @@ object DshApiAdapter {
         put("maxGoalRounds", goal.maxGoalRounds)
         put("id", goal.id)
         put("revision", goal.revision)
+    }
+
+    // ----------------------------------------------------------- attachments
+
+    /**
+     * sessionAttachmentValueSchema (client.js:5438) —
+     * `{ attachment: imageAttachmentRefSchema, data: string }` where `data` is
+     * the raw byte array (the browser wraps it in Uint8Array.from, so this is
+     * a JSON array of 0-255 integers, NOT base64).
+     *
+     * Security: the attachment must be referenced by a message of the
+     * requested session — knowing an attachmentId must never leak an image
+     * from another session.
+     */
+    private suspend fun sessionAttachment(context: Context, payload: JSONObject): JSONObject {
+        val sessionId = payload.optString("sessionId", "")
+        val attachmentId = payload.optString("attachmentId", "")
+        if (sessionId.isEmpty()) throw IllegalArgumentException("sessionId required")
+        if (attachmentId.isEmpty()) throw IllegalArgumentException("attachmentId required")
+
+        val ref = resolveMediaRefForSession(context, sessionId, attachmentId)
+            ?: throw IllegalArgumentException("attachment not found in this session")
+        val mediaStore = com.openminis.app.data.storage.MediaStore(context)
+        val file = File(mediaStore.mediaBaseDir, ref.optString("relativePath", ""))
+        if (!file.exists() || !file.isFile || file.length() > 32L * 1024 * 1024) {
+            throw IllegalArgumentException("attachment file is missing or too large")
+        }
+        val metadata = dshImageAttachment(attachmentId, file, ref)
+            ?: throw IllegalArgumentException("attachment is not a supported image")
+        val bytes = file.readBytes()
+        val data = JSONArray().apply { for (b in bytes) put(b.toInt() and 0xFF) }
+        return JSONObject()
+            .put("attachment", metadata)
+            .put("data", data)
+    }
+
+    /**
+     * Find the MediaRef for [attachmentId] among messages of [sessionId]
+     * (live journal imageRefs + durable parts_json mediaRef entries).
+     */
+    private suspend fun resolveMediaRefForSession(context: Context, sessionId: String, attachmentId: String): JSONObject? {
+        // 1) Live journal may already know the ref.
+        runCatching {
+            val replay = HeadlessChatRunner.sessionEvents(context, sessionId, null)
+            for (event in replay.events.reversed()) {
+                if (event.type != "user/message") continue
+                val message = event.toEventJson().optJSONObject("data")?.optJSONObject("message") ?: continue
+                val refs = message.optJSONArray("imageRefs") ?: continue
+                for (i in 0 until refs.length()) {
+                    val ref = refs.optJSONObject(i) ?: continue
+                    if (ref.optString("id", "") == attachmentId) return ref
+                }
+            }
+        }
+        // 2) Durable parts_json (DB) — survives restart & legacy messages.
+        runCatching {
+            val app = requireApp(context)
+            val messages = app.chatRepository.dao.loadMessages(sessionId)
+            for (message in messages.asReversed()) {
+                val parts = runCatching { org.json.JSONArray(message.partsJson) }.getOrNull() ?: continue
+                for (i in 0 until parts.length()) {
+                    val part = parts.optJSONObject(i) ?: continue
+                    if (part.optString("type") != "mediaRef") continue
+                    val value = part.optJSONObject("value") ?: continue
+                    val id = value.optString("id", "")
+                    if (id == attachmentId) {
+                        return JSONObject()
+                            .put("id", id)
+                            .put("relativePath", value.optString("relativePath", ""))
+                            .put("mimeType", value.optString("mimeType", ""))
+                            .apply {
+                                value.optString("originalFileName", "").takeIf { it.isNotEmpty() }
+                                    ?.let { put("originalFileName", it) }
+                            }
+                    }
+                }
+            }
+        }
+        return null
     }
 
     // --------------------------------------------------- resources/@ mention
