@@ -4,21 +4,22 @@ Only explicitly published, source-corresponding artifacts belong here. Local Gra
 
 | File | Source tag | Variant | ABI | Bytes | SHA-256 |
 |---|---|---|---|---:|---|
+| [`OpenMinis-Pet-1.01-beta.2-arm64-debug.apk`](OpenMinis-Pet-1.01-beta.2-arm64-debug.apk) | [`v1.01-beta.2`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta.2) | debug | arm64-v8a | 54478782 | `4158bdd821d5a9b6b48c950dc9568842ec7c8f630d9c35467a54bacdef4e9490` |
 | [`OpenMinis-Pet-1.01-beta.1-arm64-debug.apk`](OpenMinis-Pet-1.01-beta.1-arm64-debug.apk) | [`v1.01-beta.1`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta.1) | debug | arm64-v8a | 54478634 | `b76277d7956c41dfffcb28edcecfcb71e546df4b8356a9e16abfeb02eae6d147` |
 | [`OpenMinis-Pet-1.01-beta-arm64-debug.apk`](OpenMinis-Pet-1.01-beta-arm64-debug.apk) | [`v1.01-beta`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta) | debug | arm64-v8a | 54478422 | `388a843bbb63c4f6d6c5373fde4656330651d5ed27a2d499caa4e966e697f909` |
 
 GitHub Release download:
-[`v1.01-beta.1`](https://github.com/limuzi013/minis-for-android/releases/tag/v1.01-beta.1).
+[`v1.01-beta.2`](https://github.com/limuzi013/minis-for-android/releases/tag/v1.01-beta.2).
 
 The APK uses an Android Debug keystore and is intended for development and self-testing. It is not a
 production release. Verify it before installation:
 
 ```bash
-sha256sum OpenMinis-Pet-1.01-beta.1-arm64-debug.apk
+sha256sum OpenMinis-Pet-1.01-beta.2-arm64-debug.apk
 ```
 
 PowerShell:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\OpenMinis-Pet-1.01-beta.1-arm64-debug.apk
+Get-FileHash -Algorithm SHA256 .\OpenMinis-Pet-1.01-beta.2-arm64-debug.apk
 ```

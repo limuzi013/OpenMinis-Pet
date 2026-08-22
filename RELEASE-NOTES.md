@@ -1,3 +1,26 @@
+# Minis for Android `v1.01-beta.2`
+
+发布日期:2026-08-23。**1.01-beta.1 的图片回显热修**,Android arm64 开发/自测构建,与 tag [`v1.01-beta.2`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta.2) 源码对应。
+
+## 下载与校验
+
+- APK:[`OpenMinis-Pet-1.01-beta.2-arm64-debug.apk`](https://github.com/limuzi013/minis-for-android/releases/download/v1.01-beta.2/OpenMinis-Pet-1.01-beta.2-arm64-debug.apk)
+- applicationId:`dev.openminispet.android` · ABI:`arm64-v8a` · versionCode 39
+
+```bash
+sha256sum OpenMinis-Pet-1.01-beta.2-arm64-debug.apk
+# 4158bdd821d5a9b6b48c950dc9568842ec7c8f630d9c35467a54bacdef4e9490
+```
+
+## 本轮修复
+
+发送的图片在 DSH 用户气泡里显示成「附加内容块」,点开是一串 JSON:`nativeMessageToDsh`
+把整个 image blocks 数组作为**单个元素**塞进 content,DSH 端 `contentParts` 无法把它
+识别为 image 块。已改为逐个摊平(`appendFlatBlocks`),现在 content 是
+`[text, {type:image, attachment:{...}}]`,DSH 原生 ImageGallery 直接渲染并走
+`session.attachment` 加载字节。
+
+---
 # Minis for Android `v1.01-beta.1`
 
 发布日期:2026-08-23。**1.01-beta 的修复轮**,Android arm64 开发/自测构建,与 tag [`v1.01-beta.1`](https://github.com/limuzi013/minis-for-android/tree/v1.01-beta.1) 源码对应。

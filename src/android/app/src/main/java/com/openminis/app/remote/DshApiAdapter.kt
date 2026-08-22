@@ -934,11 +934,29 @@ object DshApiAdapter {
             is String -> if (raw.isNotEmpty()) content.put(textBlock(raw))
             else -> {}
         }
-        // Canonical MediaRefs first: durable DSH image blocks.
-        resolveImageRefs(context, sessionId, message)?.let { content.put(it) }
+        // Canonical MediaRefs first: durable DSH image blocks. Flat-append
+        // EVERY block individually — putting the JSONArray itself would nest
+        // it as one content element, which DSH's contentParts classifies as
+        // an unknown block and renders as the “附加内容块” JSON fallback
+        // instead of the image.
+        resolveImageRefs(context, sessionId, message)?.let { blocks ->
+            appendFlatBlocks(content, blocks)
+        }
         // Legacy attachment names only (documents/files) fall back to notes.
         appendAttachmentNotes(content, message.optJSONArray("attachments"))
         return dshMessage(message.optString("id", "msg_$role"), role, content, sourceKind)
+    }
+
+    /**
+     * Append every block of [blocks] as an INDIVIDUAL content entry.
+     * Passing the JSONArray itself would embed it as one nested element:
+     * DSH's `contentParts` would classify that array as an unknown block
+     * and render the “附加内容块”/Extra content block JSON fallback.
+     */
+    internal fun appendFlatBlocks(target: JSONArray, blocks: JSONArray) {
+        for (i in 0 until blocks.length()) {
+            blocks.optJSONObject(i)?.let { target.put(it) }
+        }
     }
 
     /**

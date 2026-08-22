@@ -81,6 +81,41 @@ class DshImageBlockTest {
     }
 
     @Test
+    fun `image blocks are flattened into content - never nested as one array element`() {
+        val content = JSONArray().put(JSONObject().put("type", "text").put("text", "hi"))
+        val blocks = JSONArray().put(JSONObject()
+            .put("type", "image")
+            .put("attachment", JSONObject().put("attachmentId", "r1")))
+        DshApiAdapter.appendFlatBlocks(content, blocks)
+        assertEquals(2, content.length())
+        assertEquals("text", content.getJSONObject(0).getString("type"))
+        assertEquals("image", content.getJSONObject(1).getString("type"))
+        assertTrue("attachment must survive flattening", content.getJSONObject(1).has("attachment"))
+    }
+
+    @Test
+    fun `flat content passes dsh contentParts classification - every block text or image`() {
+        val content = JSONArray().put(JSONObject().put("type", "text").put("text", "看这是谁"))
+        val blocks = JSONArray().put(JSONObject()
+            .put("type", "image")
+            .put("attachment", DshApiAdapter.imageAttachmentProto("ref-1", "image/png", 10, 1, 1, null)))
+        DshApiAdapter.appendFlatBlocks(content, blocks)
+        // 模拟 DSH contentParts(text/image/rest 三分)
+        var images = 0
+        var rest = 0
+        for (i in 0 until content.length()) {
+            val b = content.getJSONObject(i)
+            when {
+                b.optString("type") == "text" -> Unit
+                b.optString("type") == "image" && b.has("attachment") -> images++
+                else -> rest++
+            }
+        }
+        assertEquals(1, images)
+        assertEquals(0, rest)
+    }
+
+    @Test
     fun `resolveImageRefs emits nothing without context - the live and history trap`() {
         val message = JSONObject().put("imageRefs", JSONArray().put(
             JSONObject()

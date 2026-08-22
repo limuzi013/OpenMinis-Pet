@@ -2,6 +2,19 @@
 
 版本变更从 `1.01-beta` 开始记录。早期开发史不在此处,以 Git 历史为准。
 
+## [1.01-beta.2] — 2026-08-23
+
+修复 Web 图片气泡把图片块显示成「附加内容块」的嵌套数组 bug。
+
+### 图片
+
+- `nativeMessageToDsh` 把 `resolveImageRefs` 的结果整体 `put` 进 content,导致 DSH
+  收到 `[text, [imageBlock]]`(嵌套数组),第二个元素被 `contentParts` 归为未知块,
+  渲染成「附加内容块」JSON 而非图片;
+- 改为 `appendFlatBlocks` 把每个 image block 摊平为独立 content 元素;
+- `DshImageBlockTest` 新增两用例:平铺结构与 DSH `contentParts` 三分分类(text/image/rest)
+  钉死,嵌套数组场景回归防复发。
+
 ## [1.01-beta.1] — 2026-08-23
 
 修复轮:Web 图片链路两处阻断、原生 DSH 统计投影定稿,并补齐 App/Web 图片协议测试。
