@@ -874,7 +874,7 @@ class PetOverlayService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "OpenMinis Pet", NotificationManager.IMPORTANCE_LOW).apply {
+            val channel = NotificationChannel(CHANNEL_ID, "Minis for Android", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Keeps the floating pet visible"
                 setShowBadge(false)
             }
@@ -893,7 +893,7 @@ class PetOverlayService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("OpenMinis Pet")
+            .setContentTitle("Minis for Android")
             .setContentText("桌面宠物正在运行")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pi)

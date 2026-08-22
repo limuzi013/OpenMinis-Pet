@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">OpenMinis Pet</string>
+    <string name="app_name">Minis for Android</string>
     <string name="new_chat">Neuer Chat</string>
     <string name="settings">Einstellungen</string>
     <string name="providers">KI-Anbieter</string>
