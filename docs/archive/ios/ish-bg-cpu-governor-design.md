@@ -1,6 +1,9 @@
 # iSH Background CPU Governor — Design
 
-> Status: **implemented & device-verified 2026-08-02** (see §7 Addendum for the
+> **Archived upstream iOS record.** OpenMinis Pet is Android-only; this file is retained for attribution
+> and historical context and does not describe code shipped by the current fork.
+>
+> Original status: **implemented & device-verified 2026-08-02** (see §7 Addendum for the
 > critical actuation discovery made during verification)
 > Evidence: 3 IPS reports from 2026-08-02 (iPhone18,1 / iOS 26.5.2 / 1.12 build 1),
 > app log `minis-2026-08-02.log`, sysdiagnose RunningBoard trace.

@@ -2,7 +2,22 @@
 
 相对官方 OpenMinis `1.12`（versionCode 24）。
 
+> 本文件按时间保留当时实现状态，较早章节可能已被后续版本取代。当前能力和路径以
+> [`README.md`](README.md)、[`docs/README.md`](docs/README.md) 与运行源码为准。
+
 ---
+
+## 2026-08-22：公开仓库与文档基线整理
+
+- 重写 README、pet.15 Release Notes、构建指南、贡献说明和文档索引，明确当前功能、安全边界、
+  Debug APK 属性，以及 Ubuntu/Root/Shizuku 的真实实现状态；
+- 将历史 iOS/iSH 文档归档，更新 Minis Web 架构与开发状态，旧 Changelog 明确标记为时间记录；
+- 修复 `.gitmodules` 已声明 PRoot、但仓库没有 gitlink 导致干净克隆无法递归构建的问题；固定
+  `OpenMinis/proot` commit `8cf13e9`；
+- 移除已返回 404 的 Termux PRoot 下载回退；改为从固定 submodule 构建 PRoot，Alpine 3.21.3
+  rootfs 下载校验固定 SHA-256；两个 vendored Termux ELF loader 继续独立校验；
+- 更新 `ExecutionCoordinatorInstrumentedTest` 以适配 per-session PersistentShell，
+  `:app:assembleDebugAndroidTest` 恢复通过。
 
 ## 2026-08-22：DSH 设置融合、App/Web 双向数据与 URL 导入
 
@@ -45,6 +60,9 @@
 
 ## 2026-08-21：Harness RC8 source-adapted Web 工作台与事件流
 
+> 历史说明：本节记录最初的手写 `assets/remote/` 工作台。2026-08-22 起默认 UI 已改为
+> `assets/minis/` 中的 source-adapted React/Cordis 静态 bundle，旧资源仅作兼容。
+
 - 以本地官方 DeepSeek Harness `0.1.0-rc.8` 的 **MIT 源码**为信息架构、会话事件与
   交互细节的参照；原生改写 `index.html`、`app.css`、`app.js`，不复制或捆绑其
   React/Cordis bundle；
@@ -83,7 +101,8 @@
 ### Web 远程控制 `app/src/main/java/com/openminis/app/remote/`
 
 `RemoteAccessServer.kt`、`RemoteAccessService.kt`、`RemoteAccessPrefs.kt`、
-`CloudflareTunnelManager.kt`，前端在 `app/src/main/assets/remote/`。
+`CloudflareTunnelManager.kt`。该阶段前端位于 `app/src/main/assets/remote/`；当前默认前端已迁移到
+`app/src/main/assets/minis/`。
 
 ---
 
@@ -369,8 +388,8 @@ Harness 贡献的是信息架构、事件语义和交互原则，不是可直接
   App 主界面，会话随即结束（轻量实现）。
 - **计划模式入口**：手机聊天「⋯」菜单新增「计划模式 / 退出计划模式」，
   与网页端共用 `AgentStateStore.planSet`。
-- 本版为发布版 `1.12-pet.10`（versionCode 31），发布说明见
-  `RELEASE-NOTES.md`。
+- 本版为历史发布版 `1.12-pet.10`（versionCode 31）；根目录 `RELEASE-NOTES.md` 已更新为
+  当前 pet.15，旧版本细节以 Git 历史为准。
 
 ---
 
@@ -389,8 +408,8 @@ Harness 贡献的是信息架构、事件语义和交互原则，不是可直接
 ## 2026-08-21 安全加固与可靠性修复（审查驱动）
 
 一次全量代码审查（5 CRITICAL / 20 HIGH / 47 MEDIUM / 70+ LOW）后的修复批次，
-设计决策与完整对照见 [docs/DESIGN-HARDENING-2026-08-21.md](docs/DESIGN-HARDENING-2026-08-21.md)，
-审查报告见 [docs/find-fault-report.md](docs/find-fault-report.md)。
+设计决策见 [docs/DESIGN-HARDENING-2026-08-21.md](docs/DESIGN-HARDENING-2026-08-21.md)。
+原始逐项审查工作底稿没有纳入公开仓库。
 
 **安全**：
 

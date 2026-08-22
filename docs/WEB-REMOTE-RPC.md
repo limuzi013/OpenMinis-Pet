@@ -127,4 +127,4 @@ debug.logs.  debug.crash.  debug.appInfo
 - `src/android/app/src/main/java/com/openminis/app/debug/SafeRemoteImporter.kt` — Skill/MCP HTTPS 导入的 SSRF 与大小边界。
 - `src/android/app/src/main/java/com/openminis/app/ui/chat/SessionEventHub.kt` — 追加 journal、watermark、materialized tail 和 Room replay。
 - `src/android/app/src/main/java/com/openminis/app/debug/HeadlessChatRunner.kt` — 获取共享会话 ViewModel 并构造远程投影。
-- [DSH-DISSECTION-2026-08-21.md](DSH-DISSECTION-2026-08-21.md) — source-adapted Harness RC8 边界与设计依据。
+- [MINIS-WEB-ARCHITECTURE.md](MINIS-WEB-ARCHITECTURE.md) — 当前 Minis Web 架构与 Harness RC8 边界。

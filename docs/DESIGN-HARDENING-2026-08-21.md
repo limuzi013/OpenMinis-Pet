@@ -2,8 +2,8 @@
 
 > 本文档分享 2026-08-21 对 OpenMinis Pet 的一次全量审查修复（5 CRITICAL / 20 HIGH /
 > 47 MEDIUM / 70+ LOW）中沉淀下来的设计决策。每条都写清了「为什么这样设计」和
-> 「对使用者有什么影响」。完整问题清单与修复对照见仓库根目录
-> [../docs/find-fault-report.md](../docs/find-fault-report.md)（审查侧文档）。
+> 「对使用者有什么影响」。原始逐项审查工作底稿没有纳入公开仓库；本文与 Git 历史是公开的
+> 设计记录。
 >
 > 代码改动：41 个文件，`./gradlew :app:compileDebugKotlin` 零错误，706 个单测
 > 无新增失败（基线 42 个失败经干净 worktree 对比确认与本次改动无关）。

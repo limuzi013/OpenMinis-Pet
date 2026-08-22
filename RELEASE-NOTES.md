@@ -1,49 +1,58 @@
-# OpenMinis Pet release notes
+# OpenMinis Pet `v1.12-pet.15`
 
-## Unreleased · `1.12-pet.11-SNAPSHOT`
+发布日期：2026-08-22。该版本是 Android arm64 开发/自测构建，与 tag
+[`v1.12-pet.15`](https://github.com/limuzi013/OpenMinis-Pet/tree/v1.12-pet.15) 源码对应。
 
-The verified APK is tracked with the source at
-[`releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc8-arm64-debug.apk).
-It is a development/debug-signed artifact rather than a production Play release.
+## 下载与校验
 
-### Web Remote: source-adapted Harness workbench
+- APK：[`OpenMinis-Pet-minis-web-pet15-arm64-debug.apk`](https://github.com/limuzi013/OpenMinis-Pet/releases/download/v1.12-pet.15/OpenMinis-Pet-minis-web-pet15-arm64-debug.apk)
+- applicationId：`dev.openminispet.android`
+- versionName：`1.12-pet.15-SNAPSHOT`
+- versionCode：35
+- ABI：`arm64-v8a`
+- 大小：`54,442,918` bytes
+- SHA-256：`ed8355f6b4ccd0416d7edc82bc3729dc4398e98315b80664a7c9571bf8209fc0`
+- 签名：Android Debug keystore；APK Signature Scheme v2
 
-- The Web Remote workbench is a source-adapted implementation informed by the local official DeepSeek Harness `0.1.0-rc.8` **MIT** source. It follows the reading-first AppFrame idea: a collapsible session rail, a conversation-first main area, and on-demand details, activity, settings, and workspace surfaces.
-- It does not ship DeepSeek Harness's React/Cordis client bundle and is not a DeepSeek product or endorsed integration.
-- Browser and Android operate one session through the same `ChatViewModel`, agent loop, model selection, and thinking-level binding. Changing a model or thinking level in the browser changes the active native-chat binding for that session; it does not create a Web-only copy.
-- The initial session snapshot establishes the browser projection. An authenticated WebSocket at `/api/events/session` then delivers ordered `session/event` frames with a monotonic per-session `seq`. Reconnects use `afterSeq`; a cursor outside the retained replay window receives a reset signal and rehydrates a snapshot.
-- Core event names follow the Harness-shaped vocabulary (`user/message`, `turn/start`, `assistant/chunk`, `tool/call`, `tool/result`, `assistant/message`, `turn/end`). Text, reasoning, and tool deltas patch their existing message nodes rather than replacing the complete transcript.
-- Tool history accepts the current `toolUse` / `toolResult` representation and historical snake_case blocks. The conversation keeps a compact trajectory; details expose available tool input, output, and status.
+## 主要变化
 
-### Existing remote capabilities and boundaries
+### Minis Web 与 Android 共用数据
 
-- The workspace exposes the app's existing file, editor, and shell endpoints subject to the configured remote permission policy. Device-control Debug RPCs such as tap, text injection, screenshots, and arbitrary Debug-server file writes remain outside the Web Remote allowlist.
-- Skills, memory/SOUL, MCP, scheduled-task, and settings surfaces are backed by the App's existing allowed RPC groups. Their availability depends on the corresponding native subsystem and permission policy.
-- Provider instances, write-only API credentials, custom models, Skills and MCP servers now have real create/edit/delete flows in the Web control center. Environment-variable values are also write-only: Web can replace or clear them, while list responses expose only `hasValue`.
-- The storage surface exposes the fixed shared folders and already-authorized external mounts. Existing mounts can be renamed, made read-only/read-write, opened, or removed. Creating a mount still requires the Android SAF picker and is intentionally not faked by Web.
-- The workbench may show items already registered by the App, but it is **not** a completed, general-purpose persistent background-job platform. In particular, these notes do not claim a fully functioning `JobRegistry` or generic `job_output` / `job_list` / `job_kill` workflow.
+- `assets/minis/` 成为 `/` 的默认 Web UI；旧 `/remote/`、`/dsh/` 重定向到 `/`；
+- Minis 控制台嵌入 DSH Settings，登录页、主题、PWA 和移动端布局统一；
+- Workspace 映射原生会话分组，Goal 映射 `AgentStateStore`；
+- 主题、语言、权限、模型和会话设置使用 Android 权威数据；
+- Session/Workspace 可见页定期 reconciliation，settings 更新带 revision 冲突保护；
+- 修复模型显示名与 Entry ID、严格响应字段、会话 fork、图片 prompt、标题和目录边界等问题。
 
-### Security and packaging
+### 管理能力
 
-- Web Remote authentication and the RPC allowlist remain the authority for remote access; exposing a device through a tunnel requires a strong configured password.
-- The app remains an Android-only, arm64-v8a OpenMinis fork with application id `dev.openminispet.android`, so it can coexist with the upstream application.
-- This branch is GPL-3.0 as an OpenMinis derivative. Third-party notices, including the DeepSeek Harness MIT notice and DeepSeek theme BSD-3 notice, are in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+- Provider、模型、Skills、MCP、记忆/SOUL、环境变量、已有挂载、定时任务和 Agent 设置；
+- Skills/MCP 支持粘贴配置和公开 HTTPS URL 导入；
+- URL 导入逐跳限制 HTTPS/443、重定向和内容大小，并拒绝 localhost、私网、链路本地与 CGNAT；
+- 定时任务支持 CRUD、启停、立即运行和运行历史。
 
-### Android assistant and desktop pet
+### 安全与可靠性
 
-- The default-assistant declaration now uses the standard `RoleManager.ROLE_ASSISTANT`, a complete VoiceInteraction Session/Recognition contract, and an `ACTION_ASSIST` fallback. OEM role policy may still require a manual selection in system settings.
-- On an Android 16 / API 36 Xiaomi device, the final APK was installed and selected as the Assistant Role holder; the system bound both OpenMinis voice-interaction services, and the hardware Assist event opened OpenMinis without a fatal exception.
-- The floating pet now retries after overlay-permission return, clamps restored positions against the actual sprite size, invalidates stale asynchronous sprite loads, persists drag/snap positions, restores the current Agent state, and keeps failed/cancelled pet questions truthful in chat history.
+- 登录 per-IP 限流、Host/DNS rebinding 检查和 HTTP header/request size 限制；
+- Provider、环境和 MCP secret 不从读取响应返回；日志/崩溃正文不经 Web RPC 暴露；
+- Web 不开放 DebugServer 的截图、点击、输入、任意 Shell、任意文件或 Root 能力；
+- Cloudflare named tunnel 固定 HTTP/2，避免部分移动网络长时间等待 QUIC 降级；
+- 修复 Fork 更新比较丢失 `pet.N` 的问题，后续 pet 版本可以被正确发现。
 
-## Build status
+## 验证
 
-Verified debug build: `OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk`
+- JDK 17 / Android SDK 36：`:app:assembleDebug` 通过；
+- `DshApiAdapterTest` 与 `UpdateCheckerVersionTest` 通过；
+- Android 16 arm64 真机：DSH core/settings revision 与 Workspace Repository round-trip 2/2；
+- Skill/MCP HTTPS 导入、私网拒绝和临时测试数据清理通过；
+- 覆盖安装保留 App 数据；本机 Web、Tunnel 前台入口和 APK v2 signature 验证通过。
 
-- Variant: `debug` (debug keystore; development/self-test only)
-- ABI: `arm64-v8a`
-- Size: `54,194,427` bytes
-- SHA-256: `d5c5bfacd80a0bac517d3c63c664d77df42430d1217e94fbed61ac0e1c00d1c4`
-- Repository path: [`releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk)
+## 限制
 
-Built with `./gradlew :app:assembleDebug --no-daemon` after the WebSocket event-log,
-tool-trajectory, default-assistant selector, and pet overlay geometry/state regression tests passed.
+- 这是 Debug 签名构建，不应作为生产包或应用商店包；
+- 只支持 arm64；
+- HyperOS 需要用户手动允许后台运行和自启动，否则退到后台后可能冻结 Tunnel；
+- 新增 SAF 外部目录、系统角色、悬浮窗、电池和自启动权限必须在手机系统界面授权；
+- 当前沙箱仍为 Alpine + PRoot；Ubuntu rootfs、直接 `su`/chroot 和 VM 独立 kernel 尚未实现；
+- Shizuku/AXManager/Sui 是可选能力桥，不是普通 Agent 或 PRoot 的必需依赖。

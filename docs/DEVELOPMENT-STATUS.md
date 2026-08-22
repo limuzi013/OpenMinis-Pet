@@ -1,186 +1,92 @@
-# OpenMinis Pet continuation handoff — 2026-08-21
+# OpenMinis Pet 开发状态
 
-This file is intentionally maintained as a live handoff so another coding agent can continue without
-repeating the audit.
+更新：2026-08-22。本文记录当前 `master` 的工程状态；发布使用者请先阅读根目录
+[README](../README.md)。
 
-## Repository state
+## 仓库与发布
 
-- Repository: `https://github.com/limuzi013/OpenMinis-Pet.git`
-- Branch: `master`
-- Main pet.15 integration commit: `da47c7b` — Minis Settings integration and shared Android data.
-- Latest local APK: `releases/OpenMinis-Pet-minis-web-pet15-arm64-debug.apk`
-- APK SHA-256: `ed8355f6b4ccd0416d7edc82bc3729dc4398e98315b80664a7c9571bf8209fc0`
-- APK size: `54,442,918` bytes
-- Package: `dev.openminispet.android`; version `1.12-pet.15-SNAPSHOT` (versionCode 35)
-- The final updater fix and rebuilt APK are source-corresponding to release tag `v1.12-pet.15`.
+- Repository：`https://github.com/limuzi013/OpenMinis-Pet`
+- Branch：`master`
+- pet.15 主功能提交：`da47c7b`
+- pet 版本排序修复：`6641d03`
+- Release tag：`v1.12-pet.15`
+- Package：`dev.openminispet.android`
+- Version：`1.12-pet.15-SNAPSHOT`（versionCode 35）
+- APK：`releases/OpenMinis-Pet-minis-web-pet15-arm64-debug.apk`
+- Size：`54,442,918` bytes
+- SHA-256：`ed8355f6b4ccd0416d7edc82bc3729dc4398e98315b80664a7c9571bf8209fc0`
 
-## Current iteration changes (session 3 — Minis Web default)
+当前 APK 是 arm64 Debug 签名开发包，不是生产 release。
 
-- `assets/dsh/` has been moved to `assets/minis/`; `/` is now the source-adapted Minis Web app.
-  Legacy `/remote/` and `/dsh/` navigation redirects to `/`.
-- Added authenticated `login.html`, Minis PWA metadata/branding, and `minis-control.js/css` with
-  Provider/model groups, Skills, MCP, memory/SOUL, environment/storage, scheduled tasks, Agent,
-  Web settings, diagnostics metadata and safe advanced RPC controls.
-- `DshApiAdapter` now uses the real native event journal for history/live sequence continuity,
-  backfills a bounded recent tail for sessions created before the journal, supports image prompts,
-  true session fork, model/thinking selection, and workspace-contained directory operations.
-- Scheduled task RPC is full CRUD + toggle/delete/run/runs and routes through `ScheduledTaskManager`.
-- Security additions: Host/DNS-rebinding validation, 64-KiB/128-line header cap, per-client password
-  retry limit, MCP secret response redaction, diagnostic-body deny rules, canonical path containment.
-- pet.15 integrates `minis-control.js/css` into the stock DSH Settings shell; the login document uses
-  the same visual language. Theme, locale and permission settings now use Android sources of truth.
-- DSH Workspace maps to native `FolderEntity`; Goal maps to `AgentStateStore`. Visible-browser
-  reconciliation refreshes session/workspace baselines every five seconds so native changes appear.
-- Fork update comparison preserves the numeric `pet.N` component; `pet.14`, `pet.15` and `pet.16` no
-  longer collapse to the same upstream `1.12` base, and highest-release selection uses a real pairwise
-  version comparator.
-- Skills and MCP support bounded public-HTTPS URL import through `SafeRemoteImporter` with redirect,
-  DNS/private-range and byte-limit defenses. Device tests imported and removed temporary fixtures and
-  verified the native repositories returned to their original state.
-- WSL build verification: focused `DshApiAdapterTest` passes and `:app:assembleDebug` succeeds. Two
-  device instrumentation contracts pass: DSH core response/settings revision checks and native
-  Workspace create/rename/list/delete round-trip. APK Signature Scheme v2 verifies.
-- Full suite previously ran 740 tests; 38 pre-existing Provider tests fail because public-build OAuth
-  customization/network fixtures are absent, while 702 pass. The pre-existing
-  `ExecutionCoordinatorInstrumentedTest` currently does not compile because it still references the
-  removed `mountedSessionId`; pet.15's focused device test was built with that stale file excluded in
-  the disposable WSL build mirror only.
-- Android 16 arm64 acceptance: APK update preserved App data; local Web Remote and public HTTPS login
-  return 200. HTTP/2 registers all four Tunnel connectors. HyperOS froze the foreground-service process
-  roughly 20 seconds after backgrounding while battery exemption was not granted; the user must allow
-  background execution and OEM autostart in phone system settings before background/lock-screen
-  reliability can be accepted.
+## 已交付
 
-## Historical iteration changes (session 2 — 2026-08-21)
+### Minis Web
 
-### Bug fixes applied
+- `assets/minis/` 是 `/` 的唯一默认 Web UI；`/remote/`、`/dsh/` 重定向到 `/`；
+- DSH strict unary schema、mux/host WebSocket、session history 和有界事件重放；
+- 登录页、Minis 品牌/PWA、DSH Settings 内嵌管理控制台；
+- Workspace 映射原生会话分组，Goal/设置映射 Android 权威数据；
+- Session/Workspace 可见页 baseline 对账和 settings revision 冲突保护；
+- Provider、模型、Skills、MCP、记忆/SOUL、环境、挂载、定时任务、Agent 与 Web 设置；
+- Skills/MCP 公开 HTTPS URL 导入及 SSRF/重定向/大小防护；
+- Cloudflare named tunnel 固定 HTTP/2。
 
-| # | Area | File | Description |
-|---|------|------|-------------|
-| 24 | Web | `app.js` | Escape key 关闭 workspace/control overlay |
-| 25 | Web | `app.js` | WebSocket `visibilitychange` 重连逻辑修复，清除过时 reconnect timer |
-| 26 | Web | `app.js` | `scheduleLiveReconnect` 拆分复合返回条件 |
-| 27 | Web | `app.js` | Workspace deliverables tab 添加工具栏（计数 + 清除全部按钮）|
-| 28 | Web | `app.js` | 添加 `clear-deliverables` action 到 workspace click handler |
-| 29 | Web | `app.js` | 复制按钮改为内联 "已复制 ✓" 反馈（1.5s 恢复）|
-| 30 | Web | `app.js` | Details panel deliverables 区域添加清除按钮 |
-| 31 | Web | `app.css` | 移除 `.assistant-content.is-live` 的 `white-space: pre-wrap`（流式 Markdown 双换行 bug）|
-| 32 | Android | `ChatAgentStateUI.kt` | 添加 deliverable 清除按钮和溢出指示器 ("…还有 N 个") |
-| 33 | Backend | `HeadlessChatRunner.kt` | `selectModel()` 添加 VM 就绪等待 (`activeEntryId.first{it!=null}`, 5s 超时) |
-| 34 | Backend | `HeadlessChatRunner.kt` | `selectThinkingLevel()` 添加 VM 就绪等待（3s 超时）|
-| 35 | Backend | `ChatMutationMethods.kt` | `status()` 返回 `thinkingLevel`（之前缺失，web 无法获知服务端思考级别）|
-| 36 | Web | `app.js` | `handleDetailsClick` 添加 `clear-deliverables` action 处理 |
+### 安全
 
-### New features
+- Web 登录、per-IP 限流、Host/DNS rebinding 和 HTTP header/request size 限制；
+- Provider、环境和 MCP secret 不通过读取响应返回；
+- Web RPC allowlist + 精确 deny list；
+- canonical path containment 和 Workspace Write 权限策略；
+- Web 不开放 DebugServer 的截图、点击、输入、任意 Shell、任意文件或 Root 能力；
+- EncryptedPreferences 失败时 fail-closed，不回退明文。
 
-| # | Area | Files | Description |
-|---|------|-------|-------------|
-| F1 | 对话模式 | `ChatViewModel.kt`, `HeadlessChatRunner.kt`, `ChatMutationMethods.kt`, `app.js`, `index.html` | 完整的 chatOnly 链路：web UI "对话" 按钮 → API `chatOnly` 参数 → HeadlessChatRunner → ChatViewModel `chatOnlyForNextTurn` 标志 → `runAgentLoop` 使用 `emptyList()` 工具 → 模型纯对话不调用任何工具 |
-| F2 | 斜杠命令扩展 | `app.js`, `index.html` | 命令菜单从 5 个扩展到 10 个：`/new`, `/plan`, `/chat`, `/model`, `/workspace`, `/details`, `/goal`, `/compact`, `/export`, `/feedback` |
-| F3 | 导出对话 | `app.js` | `/export` 斜杠命令将当前对话导出为 Markdown 文件 |
-| F4 | 视觉改进 | `app.css` | 毛玻璃效果 (backdrop-filter) 应用到 header、model menu、floating menu；hero glow 优化；命令菜单加宽；`composer-chip.active` 样式支持 |
-| F5 | @ 自动补全 | `app.js`, `app.css`, `index.html` | 输入 `@` 触发浮动补全菜单，包含工具、技能、工作区文件三类；支持模糊过滤、键盘导航（↑↓/Enter/Tab/Escape）、点击选择；选中后自动插入 `@name ` 到 composer |
-| F6 | Minis Web 前端集成 | `DshApiAdapter.kt`, `RemoteAccessServer.kt`, `assets/minis/` | source-adapted 编译前端现为默认 `/`；内部兼容模块 ID 保留。`/api/events.mux`、`/api/events.host` 将原生 `SessionEvent`、审批和问题包装为严格 wire schema；App 的 `ChatViewModel` 仍是状态权威。 |
+### Android
 
-### Architecture — 对话模式 (chatOnly) 完整数据流
+- 桌面宠物、默认数字助手、原生 Agent 状态条、提问/反馈/计划等同步；
+- PRoot Alpine 沙箱、持久会话 Shell、共享目录和 SAF 外部挂载；
+- Shizuku/AXManager/Sui 为可选 Android privileged bridge；普通 Agent 不依赖它。
 
-```
-Web UI: "对话" 按钮 (chatOnlyButton, aria-pressed)
-  → state.chatOnly = true
-  → sendPrompt() 在 body 中加入 chatOnly: true
-  → POST /api/prompt { prompt, chatOnly: true, ... }
-  → ChatMutationMethods.prompt(): 解析 chatOnly=true
-  → HeadlessChatRunner.prompt(): vm.chatOnlyForNextTurn = true
-  → ChatViewModel.sendMessage()
-  → runAgentLoop():
-      val turnTools = if (chatOnlyForNextTurn) emptyList() else agentTools
-      provider.streamMessage(..., tools = turnTools, ...)
-      // 无工具 → 模型不产生 tool_use → 循环第一轮即 break
-  → finally: chatOnlyForNextTurn = false
-```
+## 验证记录
 
-## Key file locations
+- `:app:assembleDebug`：通过；
+- `:app:assembleDebugAndroidTest`：通过（已修复旧测试对 `mountedSessionId` 的引用）；
+- `DshApiAdapterTest`：通过；
+- `UpdateCheckerVersionTest`：通过；
+- pet.15 device instrumentation：DSH response/settings revision 和原生 Workspace round-trip 2/2；
+- Skill/MCP HTTPS 导入、私网拒绝和清理回归：通过；
+- APK v2 signature、覆盖安装保留数据、本机服务和前台公网入口：通过；
+- 38 项 Provider 测试仍依赖公开仓库没有的 OAuth customization/network fixture。
 
-| Purpose | Path |
-|---------|------|
-| Minis Web bundle | `src/android/app/src/main/assets/minis/` |
-| Minis Web 入口/登录 | `assets/minis/index.html`, `assets/minis/login.html` |
-| Minis 控制台 | `assets/minis/minis-control.js`, `assets/minis/minis-control.css` |
-| 旧手写 Web（仅历史参考） | `src/android/app/src/main/assets/remote/` |
-| ChatViewModel | `src/android/app/src/main/java/com/openminis/app/ui/chat/ChatViewModel.kt` (~9000+ lines) |
-| HeadlessChatRunner | `src/android/app/src/main/java/com/openminis/app/debug/HeadlessChatRunner.kt` |
-| ChatMutationMethods | `src/android/app/src/main/java/com/openminis/app/debug/ChatMutationMethods.kt` |
-| RemoteAccessServer | `src/android/app/src/main/java/com/openminis/app/remote/RemoteAccessServer.kt` |
-| DshApiAdapter | `src/android/app/src/main/java/com/openminis/app/remote/DshApiAdapter.kt` |
-| DSH 真机契约测试 | `src/android/app/src/androidTest/java/com/openminis/app/remote/DshApiAdapterInstrumentedTest.kt` |
-| HTTPS 安全导入 | `src/android/app/src/main/java/com/openminis/app/debug/SafeRemoteImporter.kt` |
-| Linux/Ubuntu 内核评估 | `docs/LINUX-ON-XIAOMI-15-DADA.md` |
-| 兼容适配前端资源 | `src/android/app/src/main/assets/minis/` (内部模块 ID 保留) |
-| AgentStateStore | `src/android/app/src/main/java/com/openminis/app/tools/AgentStateStore.kt` |
-| ChatAgentStateUI | `src/android/app/src/main/java/com/openminis/app/ui/chat/ChatAgentStateUI.kt` |
-| StorageRpcMethods | `src/android/app/src/main/java/com/openminis/app/debug/StorageRpcMethods.kt` |
+`ExecutionCoordinatorInstrumentedTest` 已按 per-session PersistentShell 架构更新，不再引用已删除的
+`mountedSessionId`。
 
-## Confirmed backend inventory
+## 尚未交付
 
-- Provider CRUD already exists in `debug/ProviderMutationMethods.kt` and is dispatched by
-  `DebugRPCHandler`: `provider.instances.*`, `provider.models.*`, `provider.groups.*`.
-- Web `/api/rpc` allows `provider.*` but deliberately denies `provider.export` and `provider.import`
-  because those return stored secrets. Do not remove that deny rule.
-- Session model/thinking REST routes already exist in `RemoteAccessServer.kt`:
-  `/api/session/model` and `/api/session/thinking`.
-- Skills expose list/get/create/update/toggle/delete and the Minis console has corresponding forms.
-- MCP exposes list/get/create/update/import/toggle/delete. Web responses redact `env` and `headers`
-  values; precise secret replacement remains write-only through RPC.
-- Environment variables expose list/create/update/delete; values are never returned.
-- Scheduled tasks expose list/get/create/update/toggle/delete/run/runs through Android's manager.
-- `MountedFoldersStore` supports list/rename/write-toggle/remove, but adding a mount requires an
-  Android SAF picker and cannot honestly be completed from a browser. Web should list/manage existing
-  mounts and deep-link/instruct the user to pick a new folder in the App.
-- Shared folders are three fixed entries from `SharedFolderRegistry`: `/var/minis/shared` (R/W),
-  `/var/minis/skills` (read-only in settings), `/var/minis/memory` (read-only in settings).
+- Ubuntu PRoot profile；
+- Magisk/KernelSU/APatch 直接 `su` + namespace/chroot backend；
+- QEMU/KVM 独立 Ubuntu kernel backend；
+- 完整 DSH Subagent 目录、通用持久 Job runtime 和队列编辑；
+- production release keystore、关闭 DebugServer 的正式 release APK；
+- cloudflared 固定版本与 SHA-256；
+- Provider 全量离线 fixture。
 
-## Pending work
+## 设备相关限制
 
-### User-requested acceptance work still open
+- HyperOS 未授予后台无限制时，即使前台服务进程存在，也可能在退到后台约 20 秒后冻结网络处理；
+- 电池豁免、自启动、系统角色、悬浮窗和 SAF 授权必须由用户在 Android 系统界面完成；
+- Shizuku 不是 Root，也不是 Ubuntu/内核前置条件；Root 设备未来可直接使用 `su` backend，
+  但当前源码尚未实现。
 
-1. Install the latest APK on a real arm64 phone and verify login, LAN and Cloudflare Host handling.
-2. Verify old/new session history plus live text/reasoning/tool events across reconnects.
-3. Exercise every visual control against real repositories, especially scheduled alarms and MCP edits.
-4. Confirm approval/question response cards and browser↔phone synchronization under concurrent use.
+## 关键入口
 
-### Previous iteration items still open
-
-- Repair Android default-assistant role/wake path refinements (basic fix done, edge cases may remain).
-- Desktop pet overlay polish (core reliability fixed, animation/personality WIP).
-
-## Safety and truthfulness constraints
-
-- Web Remote is authenticated but may be tunnel-exposed. Never return Provider API keys or environment
-  secret values in list endpoints. Accept write-only replacement values and return `hasCredential` /
-  `hasValue` metadata.
-- `debug.tap / debug.inputText / debug.screenshot / debug.writeFile` 等远程操控手机的交互式方法，
-  仍被整体挡在 Web 端之外。
-- Do not pretend Web can invoke Android's SAF directory picker. Existing mounts can be listed/managed;
-  creating one needs a native user gesture.
-- Do not claim a full DeepSeek Harness runtime: the UI is source-adapted; Android `ChatViewModel` is the
-  state authority.
-- Preserve the existing `/api/rpc` deny list and workspace-write path policy.
-- The `EncryptedPrefsFactory` fail-closed behavior must be maintained (no fallback to plaintext).
-
-## Build and deploy
-
-```bash
-export ANDROID_HOME=/home/liu-j/Android/Sdk
-export ANDROID_SDK_ROOT=/home/liu-j/Android/Sdk
-# Building from the NTFS/non-ASCII path is slow and can trigger path checks.
-# The verified flow rsyncs src/android + src/shared into ~/openminis-build first.
-cd ~/openminis-build/src/android
-./gradlew :app:assembleDebug --no-daemon
-```
-
-APK output: `app/build/outputs/apk/debug/app-debug.apk`
-
-Windows adb for device install:
-```text
-C:\Users\liu-j\Documents\Codex\2026-08-16\new-chat\work\android-platform-tools\platform-tools\adb.exe
-```
+| 目的 | 路径 |
+|---|---|
+| 默认 Web | `src/android/app/src/main/assets/minis/` |
+| Remote server | `src/android/app/src/main/java/com/openminis/app/remote/RemoteAccessServer.kt` |
+| DSH adapter | `src/android/app/src/main/java/com/openminis/app/remote/DshApiAdapter.kt` |
+| Session journal | `src/android/app/src/main/java/com/openminis/app/ui/chat/SessionEventHub.kt` |
+| Safe URL import | `src/android/app/src/main/java/com/openminis/app/debug/SafeRemoteImporter.kt` |
+| PRoot runtime | `src/android/app/src/main/java/com/openminis/app/sandbox/PRootKernel.kt` |
+| Rootfs manager | `src/android/app/src/main/java/com/openminis/app/sandbox/RootfsManager.kt` |
+| Build | [`../BUILDING.md`](../BUILDING.md) |
+| Docs index | [`README.md`](README.md) |

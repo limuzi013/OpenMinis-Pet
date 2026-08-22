@@ -12,10 +12,11 @@ iOS 相关代码与 iSH，但这不改变许可证义务**：本仓库是 OpenMi
 
 | Component | Version / Source | License | Notes |
 |---|---|---|---|
-| [proot](https://github.com/OpenMinis/proot) (fork) | git submodule `deps/proot` | **GPL-2.0** | Linux sandbox on Android (`libproot.so`, `proot-aarch64`) |
-| [talloc](https://talloc.samba.org) (Samba) | vendored at `deps/talloc` | **LGPL-3.0-or-later** | Memory allocator required by proot |
+| [proot](https://github.com/OpenMinis/proot) (fork) | pinned git submodule `deps/proot` | **GPL-2.0** | Android sandbox runtime; fork-built `libproot.so` / `proot-aarch64` are generated locally |
+| Termux PRoot ELF loaders | proot `5.1.107-70`, tracked under `jniLibs/arm64-v8a/` | **GPL-2.0** | Vendored 64/32-bit Android loaders; SHA-256 pinned by `deps/build_proot.sh` because the exact package was retired |
+| [talloc](https://talloc.samba.org) (Samba) | 2.4.2, downloaded by `deps/build_proot.sh` | **LGPL-3.0-or-later** | Statically linked allocator required by PRoot; generated source/build directory is not tracked |
 | [cppjieba](https://github.com/yanyiwu/cppjieba) | vendored (`jieba_jni`) | **MIT** | Chinese word segmentation (header-only + dictionaries) |
-| Alpine Linux minirootfs | downloaded at build time by `deps/prepare_alpine_rootfs.sh` | Aggregate of package licenses (musl **MIT**, BusyBox **GPL-2.0**, etc.) | Not stored in this repo; bundled into app builds as the default rootfs |
+| Alpine Linux minirootfs | 3.21.3, downloaded and SHA-256 checked by `scripts/prepare_android_sandbox.sh` | Aggregate of package licenses (musl **MIT**, BusyBox **GPL-2.0**, etc.) | Generated build asset; bundled into the APK as the current rootfs |
 
 ## Web Remote 前端（`assets/minis/` 与兼容资源）
 
@@ -41,6 +42,7 @@ iOS 相关代码与 iSH，但这不改变许可证义务**：本仓库是 OpenMi
 | Reorderable (sh.calvin.reorderable) | 2.4.0 | **Apache-2.0** |
 | ACRA (acra-core) | 5.12.0 | **Apache-2.0** |
 | Shizuku API + provider (dev.rikka.shizuku) | 13.1.5 | **MIT** |
+| [RealTimeCutVADLibraryForAndroid](https://github.com/helloooideeeeea/RealTimeCutVADLibraryForAndroid) | 1.0.5 | **MIT** |
 
 Test-only dependencies: JUnit 4.13.2 (**EPL-1.0**), MockWebServer 4.12.0 (**Apache-2.0**), kotlinx-coroutines-test 1.9.0 (**Apache-2.0**), org.json 20231013 (**Public Domain / JSON License**).
 
@@ -49,7 +51,7 @@ Test-only dependencies: JUnit 4.13.2 (**EPL-1.0**), MockWebServer 4.12.0 (**Apac
 | Asset | Location | License |
 |---|---|---|
 | KaTeX | Android `app/src/main/assets/katex/` | **MIT** |
-| jieba dictionaries | iOS bundle / Android `assets/jieba/` | **MIT** (cppjieba distribution) |
+| jieba dictionaries | Android `assets/jieba/` | **MIT** (cppjieba distribution) |
 
 ## Removed / historical
 

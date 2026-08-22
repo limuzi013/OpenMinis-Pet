@@ -1,5 +1,8 @@
 # iOS Sandbox Environment: iSH Virtualization Summary
 
+> **Archived upstream iOS record.** This Android-only fork does not ship iSH, the iOS source tree,
+> or the build outputs described below.
+
 ## Overview
 
 MinisApp uses a customized fork of [iSH](https://github.com/OpenMinis/ish-arm64) (OpenMinis/ish-arm64) to provide a full Linux sandbox execution environment on iOS. The iSH kernel runs an Alpine Linux (aarch64) guest inside the app process, giving the AI agent a real shell with networking, filesystem, and process management — while native offloads bridge guest commands to iOS frameworks for hardware and system access.

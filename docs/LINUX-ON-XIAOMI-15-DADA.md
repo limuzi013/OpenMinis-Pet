@@ -1,7 +1,9 @@
 # Xiaomi 15 (`dada`) 上运行 Ubuntu / 更换内核的可行性
 
-评估日期：2026-08-22。本文只记录技术判断；本轮没有刷写 `boot`、`init_boot`、
-`vendor_boot`、`dtbo`、`vbmeta`，也没有让手机进入 fastboot。
+评估日期：2026-08-22。本文只讨论 Xiaomi 15 的**手机系统级**移植；本轮没有刷写 `boot`、
+`init_boot`、`vendor_boot`、`dtbo`、`vbmeta`，也没有让手机进入 fastboot。若问题是替换 App
+内的 Alpine 用户空间、直接申请 Root 或运行独立 VM kernel，请改看
+[`LINUX-SANDBOX-ROOT-AND-UBUNTU.md`](LINUX-SANDBOX-ROOT-AND-UBUNTU.md)。
 
 ## 结论
 
@@ -66,8 +68,10 @@ Binder 能力”的中间档方案：
 | Android + Root 守护进程 | 否 | Root 能力；风险和责任显著提高 |
 | Ubuntu Touch/Droidian/原生 Linux | 否 | 权限由新系统决定，Shizuku 不存在 |
 
-OpenMinis 如果继续作为 Android App，Shizuku 是比 Root 更容易撤销、更能保留厂商系统和硬件
-驱动的一种增强方式；它并不是换内核的前置条件。
+OpenMinis 如果继续作为 Android App，Shizuku 是比 Root 更容易撤销的一种增强方式；它并不是
+换 rootfs 或换内核的前置条件。设备通过 Magisk、KernelSU 或 APatch Root 后，未来的 App 后端
+可以直接调用 `su`，由 Root 管理器弹窗授权，不必依赖 Shizuku；但 pet.15 尚未实现该
+`su`/namespace/chroot 后端。
 
 ## 推荐的安全推进顺序
 

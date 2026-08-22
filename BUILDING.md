@@ -1,185 +1,144 @@
-# Building OpenMinis Pet (Android)
+# Building OpenMinis Pet for Android
 
-> 本分支只构建 Android，iOS 相关内容（`src/ios/`、iSH、FFmpeg、LAME）已移除。
-> 中文构建步骤见 [BUILD-CN.md](BUILD-CN.md)。
+This document describes the current `master` branch. The fork is Android-only and builds
+`arm64-v8a`; the upstream iOS/iSH tree is not shipped. Chinese instructions are in
+[BUILD-CN.md](BUILD-CN.md).
 
-Minis ships a full Linux sandbox inside the app, so a first build is not just
-"open the project and press Run": the native dependencies (PRoot) and the Alpine rootfs are **built from source by the
-scripts in `deps/`**, not committed as binaries. Budget ~30–60 minutes for the
-first build; afterwards the artifacts are cached on disk and normal builds are
-fast.
+## Requirements
 
-Read the section for your platform end to end before starting — the steps are
-ordered by dependency, and skipping one produces confusing link errors later.
+| Tool | Version / notes |
+|---|---|
+| Host | Linux or WSL2 recommended |
+| JDK | 17 |
+| Android SDK | compileSdk 36, targetSdk 35, minSdk 26 |
+| Android NDK | r28+ (`28.0.13004108` used for pet.15) |
+| CMake | 3.22.1 |
+| Shell tools | bash, curl, tar, make, awk, sed, sha256sum |
 
----
+Gradle 8.11.1, AGP 8.7.3, and Kotlin 2.1.0 are selected by the repository. Do not install a separate
+Gradle distribution.
 
-## Common setup
-
-This is the **OpenMinis Pet** fork (only Android; the `src/ios/` tree and
-iSH/FFmpeg/LAME dependencies are removed). Clone **this fork** with its
-submodules — the PRoot fork is a submodule, and a clone without them will
-fail at the native build step:
+## Clone
 
 ```sh
 git clone --recurse-submodules https://github.com/limuzi013/OpenMinis-Pet.git
 cd OpenMinis-Pet
+```
 
-# Already cloned without --recurse-submodules?
+For an existing non-recursive clone:
+
+```sh
 git submodule update --init --recursive
 ```
 
-| Submodule | Repository | Used by |
-|---|---|---|
-| `deps/proot` | [OpenMinis/proot](https://github.com/OpenMinis/proot) | Android sandbox |
+`deps/proot` is a pinned Git submodule. A source archive downloaded from GitHub does not include the
+submodule contents; clone recursively or populate it manually before building.
 
-### Build-time customization
-
-Some values are injected at build time and are **not** in this repository.
-Copy the templates before building:
+## SDK and build customization
 
 ```sh
+export ANDROID_HOME="$HOME/Android/Sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"  # adjust locally
+
 cp src/android/app/provider-customization.properties.example \
    src/android/app/provider-customization.properties
 ```
 
-Leaving the values empty is fine — **the app compiles and runs**. A value is
-only required by the feature that uses it, and that feature fails loudly at
-runtime when it is missing. API-key based sign-in works without any
-customization.
+Empty customization values are valid for API-key based providers. Features that require an omitted
+OAuth customization value fail explicitly at runtime; no private defaults are stored in this repository.
 
-### `ANTHROPIC_OAUTH_IDENTIFIER_PROMPT`
-
-Only relevant if you want to **sign in with Claude OAuth credentials** rather
-than an Anthropic API key.
-
-When a request is authenticated with OAuth, Anthropic's endpoint expects the
-system prompt to begin with the identifying line that Claude Code itself
-sends; without it the request is rejected. The build injects that line from
-this value, so OAuth sign-in fails at runtime while it is empty.
-
-We do not ship a value. Supply your own if you need this path — other
-open-source projects that talk to the same endpoint declare the same
-identifier, for example
-[claude-relay-service](https://github.com/Wei-Shaw/claude-relay-service),
-which you can consult for the exact wording.
-
-Everything else — Anthropic API keys, and every other provider — works
-without setting this.
-
----
-
-## Android
-
-### Requirements
-
-| Tool | Version / notes |
-|---|---|
-| JDK | **17** (`sourceCompatibility`/`targetCompatibility` are 17) |
-| Android SDK | **compileSdk 36**, targetSdk 35, **minSdk 26** |
-| Android NDK | **r28+** — set `$ANDROID_NDK_HOME`, or install via Android Studio |
-| CMake | 3.22.1 (install through the SDK Manager) |
-| Shell tools | `curl`, `tar`, `make`, `awk`, `sed` |
-
-Gradle itself comes from the wrapper (Gradle 8.11.1, AGP 8.7.3, Kotlin 2.1.0) —
-do not install it separately.
-
-Only `arm64-v8a` is built (`abiFilters`), so use an arm64 device or emulator
-image.
-
-### 1. Build the native dependencies
+## Build the sandbox assets
 
 ```sh
-./deps/build_proot.sh              # → assets/proot-aarch64, jniLibs/arm64-v8a/*.so
-./scripts/prepare_android_sandbox.sh   # → assets/alpine-minirootfs.tar.gz
+./deps/build_proot.sh
+./scripts/prepare_android_sandbox.sh
 ```
 
-- **`build_proot.sh`** cross-compiles a static `libtalloc` and the
-  `deps/proot` fork with the NDK, then installs into the app's `assets/` and
-  `jniLibs/arm64-v8a/`: the proot binary itself plus **`libproot-loader.so`
-  and `libproot-loader32.so`**. The script verifies all of them at the end and
-  fails the build if any is missing.
+The first command builds PRoot from the pinned `OpenMinis/proot` source and writes the generated
+`proot-aarch64`/`libproot.so` artifacts. The two Android ELF loaders are pinned vendored Termux builds
+tracked by Git because the exact package has been retired and the fork-built loaders regress on some
+ROMs; `build_proot.sh` verifies their SHA-256 values.
 
-  The loaders are required, not optional. Android 10+ enforces W^X for
-  `untrusted_app`: nothing labelled `app_data_file` — which includes the whole
-  extracted Alpine rootfs under the app's `files/` dir — can ever be executed.
-  Only `nativeLibraryDir`, populated from `lib/**/*.so` in the APK, is
-  executable, so the loader lives there and maps guest binaries itself instead
-  of relying on the kernel's `execve`. (proot can normally extract an embedded
-  loader at runtime, but on Android it writes it into the app's temp dir and
-  hits the same W^X wall.) That is also why they carry a `.so` suffix despite
-  being executables rather than shared objects — only `*.so` gets extracted.
+The second command downloads the pinned Alpine 3.21.3 arm64 minirootfs, verifies its SHA-256, and checks
+that all required PRoot artifacts exist. Older revisions tried to download PRoot from a retired Termux
+package URL; that fallback has been removed.
 
-  Artifacts are **not** byte-identical across NDK releases; the loader's code
-  differs between toolchain generations. Functionally equivalent — don't expect
-  checksums to match someone else's build.
-- **`prepare_android_sandbox.sh`** downloads the Alpine aarch64 minirootfs into
-  `assets/`.
+Generated PRoot and Alpine artifacts are ignored by Git and must be recreated on a clean checkout.
 
-Both write into `src/android/app/src/main/`, and their outputs are gitignored —
-they are build artifacts, so rerun the scripts rather than committing them.
-
-The small JNI libraries in `src/main/cpp/` (`pty_bridge`, the crash handler,
-`jieba_jni`) are built by CMake as part of the normal Gradle build; no separate
-step is needed.
-
-### 2. Build the app
+## Build the APK
 
 ```sh
 cd src/android
-./gradlew :app:assembleDebug          # → app/build/outputs/apk/debug/
-./gradlew :app:installDebug           # install onto a connected device
+./gradlew :app:assembleDebug --no-daemon
 ```
 
-Release builds are configured with the debug signing config, so no keystore is
-required to produce one locally.
+Output:
 
-### Tests
+```text
+src/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Install on a connected arm64 device with either:
 
 ```sh
-./gradlew :app:testDebugUnitTest        # JVM unit tests
-./gradlew :app:connectedAndroidTest     # instrumented; needs a device/emulator
+./gradlew :app:installDebug
+# or
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
----
+## Tests
+
+Focused public-repository regression baseline:
+
+```sh
+cd src/android
+./gradlew :app:testDebugUnitTest \
+  --tests com.openminis.app.remote.DshApiAdapterTest \
+  --tests com.openminis.app.data.UpdateCheckerVersionTest
+
+./gradlew :app:assembleDebugAndroidTest
+```
+
+Use `./gradlew :app:connectedDebugAndroidTest` only with an explicitly authorized device. Thirty-eight
+Provider tests require OAuth customization or network fixtures that are intentionally absent from the
+public repository; do not remove them merely to produce a green unconfigured run.
 
 ## Troubleshooting
 
-**`deps/proot` is empty** — the submodules were not initialised:
-`git submodule update --init --recursive`.
+### `deps/proot/src` is missing
 
-**Android: `Android NDK not found`** — set `ANDROID_NDK_HOME` to your NDK r28+
-installation, e.g.
-`export ANDROID_NDK_HOME=~/Library/Android/sdk/ndk/28.0.12433566`.
+Run `git submodule update --init --recursive`.
 
-**Android: app starts but the shell does not** — the sandbox assets are
-missing. Rerun `./deps/build_proot.sh` and
-`./scripts/prepare_android_sandbox.sh`, then rebuild.
+### Android NDK not found
 
-**Android: every command returns `[Shell not running] (exit code: -1)`** —
-the proot ELF loaders are missing from the APK. Check that
-`src/android/app/src/main/jniLibs/arm64-v8a/` contains `libproot-loader.so`
-(and `libproot-loader32.so`); if not, rerun `./deps/build_proot.sh`, which
-now verifies them, and rebuild. Confirm with
-`unzip -l app-debug.apk | grep libproot` — all three `.so` files must be
-present.
+Set `ANDROID_NDK_HOME` to an installed r28+ directory containing `toolchains/llvm/prebuilt`.
 
-This failure is deliberately hard to spot from the outside: proot still
-launches and logs its `native_offload` initialisation, so the sandbox looks
-healthy and any "does it start?" check passes. Only the first
-`execve("/bin/sh")` fails, with `Permission denied` in logcat under the
-`PRootStderr` tag. When touching this area, verify by **running a command and
-asserting exit code 0** — starting the sandbox is not enough.
+### The app starts but sandbox commands fail
 
-**A feature throws about a missing configuration value** — that value comes
-from the customization file; see [Build-time customization](#build-time-customization).
+Rebuild and verify the sandbox artifacts:
 
----
+```sh
+./deps/build_proot.sh
+./scripts/prepare_android_sandbox.sh
+unzip -l src/android/app/build/outputs/apk/debug/app-debug.apk \
+  | grep -E 'libproot|alpine-minirootfs'
+```
 
-## Licensing note
+The APK needs `libproot.so`, the 64-bit PRoot loader, and the Alpine rootfs. Starting the App alone is
+not a valid sandbox test; execute a shell command and assert exit code 0.
 
-Upstream Minis is **GPLv3**; one reason is that it links iSH (GPLv3). This fork
-drops iOS and iSH, but that does not change the obligation — it is a derivative
-work of OpenMinis and stays **GPLv3**. It still links PRoot (GPLv2). Preserve the
-vendored `LICENSE` files. See
-[LICENSE](LICENSE) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+### AGP warns that compileSdk 36 was tested only through 35
+
+This is the known AGP 8.7.3 compatibility warning for pet.15. Treat any AGP upgrade as a separate change
+and rerun Compose, KSP, CMake, JVM, and instrumentation checks.
+
+## Signing and production releases
+
+The current `release` build type still uses debug signing, and debug APKs start DebugServer. This is
+acceptable only for development/self-test. A production release requires a protected release keystore,
+a release variant that does not start DebugServer, a complete security/test pass, an immutable source
+tag, and published artifact hashes.
+
+See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the PRoot, loader, Alpine, Harness, and Android
+dependency licensing notes.

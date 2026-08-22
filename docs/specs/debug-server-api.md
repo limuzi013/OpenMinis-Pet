@@ -1,5 +1,10 @@
 # Debug Server API
 
+> **历史/混合平台参考。** 本文从上游保留，前半部分仍包含 iOS `localhost:8321` 与 UIKit
+> 契约，不能视为 OpenMinis Pet Android pet.15 的完整现行 API。Android DebugServer 使用
+> token 认证；端口、方法和字段应以当前源码、运行时 `rpc.discover` 及
+> [`../WEB-REMOTE-RPC.md`](../WEB-REMOTE-RPC.md) 的安全边界为准。
+
 MinisApp includes a built-in JSON-RPC 2.0 debug server (DEBUG builds only) for runtime view inspection.
 
 ## Connection

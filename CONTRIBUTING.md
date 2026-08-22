@@ -1,48 +1,53 @@
-# Contributing
+# Contributing to OpenMinis Pet
 
-Thanks for your interest in Minis.
+OpenMinis Pet is an unofficial Android fork of OpenMinis. Fork-specific bugs and feature requests belong
+in this repository, not in the upstream OpenMinis or DeepSeek trackers.
 
-## We do not accept pull requests
+## Report an issue
 
-This repository is a **mirror**. Development happens in a private tree and is
-published here on each release, so a pull request opened against this
-repository has nowhere to land — merging it would be overwritten by the next
-sync, and we cannot merge it upstream either.
+Open: <https://github.com/limuzi013/OpenMinis-Pet/issues>
 
-Please do not spend your time preparing one. If you have already opened a PR,
-we will close it with a pointer back to this document; that is not a judgement
-on the work.
+Please include:
 
-## What we do want
+- OpenMinis Pet version/versionCode and Android version;
+- device model/ROM and whether it is rooted;
+- exact steps, expected result, and actual result;
+- selected Provider/model when relevant;
+- sanitized App logs or crash metadata.
 
-Everything else. The product is shaped by what people report:
+Never paste API keys, OAuth tokens, Web Remote passwords, Cloudflare tunnel tokens, DebugServer tokens,
+private file contents, or unrelated phone data. Reproduce against the App itself; do not inspect other Apps.
 
-- **[Open an issue](https://github.com/OpenMinis/OpenMinis/issues)** — bugs,
-  crashes, papercuts, feature requests, questions about behaviour. A clear
-  report is worth more to us than a patch, because it tells us what to build.
-- **Share what you have built** — real workflows and use cases go in
-  **[AwesomeMinis](https://github.com/OpenMinis/AwesomeMinis)**, which does
-  take contributions.
-- **Write a skill** — **[MinisSkills](https://github.com/OpenMinis/MinisSkills)**
-  also takes contributions, and skills are how most people extend Minis
-  without touching the app at all.
-- **Talk to us** — the [Telegram group](https://t.me/+2NzhOJuzRyI1YmM1) is
-  where most day-to-day discussion happens.
+## Pull requests
 
-## Filing a good issue
+Small, focused pull requests are welcome. Before opening one:
 
-The more of this you can give us, the faster it gets fixed:
+1. base it on the current `master` branch;
+2. keep Android behavior authoritative—do not add a second Web-only Agent/runtime/database;
+3. preserve Web Remote allow/deny policy and secret redaction;
+4. do not expose screenshot, input injection, arbitrary Shell/file, credentials, `su`, or Root through Web;
+5. preserve third-party notices and required `@deepseek-ai/dsh-*` compatibility IDs;
+6. update tests and the relevant current documentation, not only the historical changelog;
+7. do not commit generated rootfs/PRoot/Gradle outputs or private customization values.
 
-- Platform and version (Settings → About shows both)
-- What you expected, what happened instead
-- Steps to reproduce, or the prompt that triggered it
-- Which model / provider was selected, if relevant
-- Logs, if the app produced any (Settings → Logs)
+## Build and test
 
-## Using the source
+Follow [BUILDING.md](BUILDING.md) or [BUILD-CN.md](BUILD-CN.md). The minimum public-repository checks are:
 
-The code is GPLv3. You are free to fork it, modify it and run your own build —
-see [BUILDING.md](BUILDING.md). The licence obliges you to publish the source
-of anything you distribute, and to keep it under GPLv3.
+```bash
+cd src/android
+./gradlew :app:testDebugUnitTest \
+  --tests com.openminis.app.remote.DshApiAdapterTest \
+  --tests com.openminis.app.data.UpdateCheckerVersionTest
+./gradlew :app:assembleDebugAndroidTest
+./gradlew :app:assembleDebug
+```
 
-We simply do not merge changes back through this repository.
+Provider tests that require private OAuth customization or external network fixtures must be reported as
+such; do not delete or weaken them merely to make an unconfigured build green.
+
+## License
+
+Contributions are distributed under [GPL-3.0](LICENSE), consistent with the repository. By submitting a
+change, you confirm that you have the right to provide it under that license. Third-party code must include
+its source and license information in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

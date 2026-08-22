@@ -1,93 +1,171 @@
-# 构建说明
+# OpenMinis Pet Android 构建说明
 
-这是一份**完整、可独立构建**的源码，不需要再打补丁、不需要 `git submodule update`。
+本文对应当前 `master`。项目只构建 Android `arm64-v8a`；iOS/iSH 已从本分支移除。
 
-## 这份源码是什么
+## 已验证环境
 
-在官方 OpenMinis `1.12`（versionCode 24）基础上合并了三组改造：
+| 工具 | 版本/要求 |
+|---|---|
+| 操作系统 | Linux 或 WSL2 |
+| JDK | 17 |
+| Gradle | Wrapper 8.11.1 |
+| Android Gradle Plugin | 8.7.3 |
+| Kotlin | 2.1.0 |
+| Android SDK | compileSdk 36，targetSdk 35，minSdk 26 |
+| NDK | r28+（pet.15 使用 `28.0.13004108`） |
+| CMake | 3.22.1 |
+| ABI | `arm64-v8a` |
 
-- **桌面宠物**：悬浮宠物、点击对话、语音输入输出、巡游与贴边隐藏、Agent 状态联动
-- **默认数字助手**：Android Assistant Role、系统助手手势唤起与识别服务桥
-- **Pi 风格 Agent**
-- **Web Remote**：网页远程管理、Provider/模型/技能/MCP/环境与挂载、登录鉴权、Cloudflare Tunnel
+Windows 原生的非 ASCII/NTFS 路径可能触发 Gradle、CMake、符号链接和性能问题，推荐 WSL 的
+ASCII 路径。
 
-`applicationId` 是 `dev.openminispet.android`，与官方版 `com.openminis.app` **不冲突，可同时安装**。
-
-改动清单与踩坑记录见 [CHANGELOG-FORK.md](CHANGELOG-FORK.md)，项目说明见 [README.md](README.md)。
-
-## 已验证
-
-2026-08-21 在 WSL2 Ubuntu 上完整编译与关键 JVM 回归测试通过，产出 51 MB 的 debug APK。
-
-仓库同时提供这次验证通过的预构建包：
-[`releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk)。
-它只支持 `arm64-v8a`，使用 debug 签名；SHA-256 为
-`d5c5bfacd80a0bac517d3c63c664d77df42430d1217e94fbed61ac0e1c00d1c4`（`54,194,427` bytes）。
-
-环境：JDK 17（Temurin）、Android SDK Platform 36、Build-Tools 36.0.0、NDK 28.0.13004108、CMake 3.22.1、只构建 `arm64-v8a`。
-
-## 构建步骤
-
-必须在 **Linux 或 WSL** 里构建。Windows 原生路径下 Gradle 与 CMake 会因为路径分隔符和符号链接问题失败。
+## 1. 克隆源码
 
 ```bash
-export ANDROID_SDK_ROOT=$HOME/Android/Sdk
-export ANDROID_HOME=$ANDROID_SDK_ROOT
-export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108
+git clone --recurse-submodules https://github.com/limuzi013/OpenMinis-Pet.git
+cd OpenMinis-Pet
 ```
 
-### 1. 构建 PRoot（首次必做）
-
-沙盒的核心，产物是 `libproot.so` 与 `assets/proot-aarch64`：
+如果已经普通克隆：
 
 ```bash
-./deps/build_proot.sh
+git submodule update --init --recursive
 ```
 
-### 2. 准备 Alpine sandbox
+`deps/proot` 是固定 commit 的 submodule。缺少它时 `deps/build_proot.sh` 无法构建。
 
-会下载 Alpine minirootfs 并放进 assets：
+## 2. 配置 SDK/NDK
 
 ```bash
-./scripts/prepare_android_sandbox.sh
+export ANDROID_HOME="$HOME/Android/Sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"  # 按实际安装目录调整
 ```
 
-### 3. 补上构建期配置
+需要的常用命令：`bash`、`curl`、`tar`、`make`、`awk`、`sed`、`sha256sum`。
 
-公开镜像只带 `.example`，缺了它编译能过、运行到需要该值时才报错：
+## 3. 准备公开构建配置
 
 ```bash
 cp src/android/app/provider-customization.properties.example \
    src/android/app/provider-customization.properties
 ```
 
-### 4. 编译 APK
+留空也可以编译和使用 API Key Provider。公开仓库未提供的 OAuth 定制值只影响对应 OAuth
+功能，缺失时应在运行时明确失败，不会回退到秘密默认值。
+
+## 4. 构建 PRoot
 
 ```bash
-cd src/android && ./gradlew :app:assembleDebug
+./deps/build_proot.sh
 ```
 
-产物在 `src/android/app/build/outputs/apk/debug/app-debug.apk`。
+主要产物：
 
-### 安装
+```text
+src/android/app/src/main/assets/proot-aarch64
+src/android/app/src/main/jniLibs/arm64-v8a/libproot.so
+```
+
+两个 ELF loader：
+
+```text
+libproot-loader.so
+libproot-loader32.so
+```
+
+是仓库中明确保留的 vendored Termux 构建；脚本会核对固定 SHA-256。fork-built PRoot 和 Alpine
+rootfs 是可重建产物并被 `.gitignore` 排除。
+
+## 5. 准备 Alpine rootfs
 
 ```bash
-adb install -r src/android/app/build/outputs/apk/debug/app-debug.apk
+./scripts/prepare_android_sandbox.sh
 ```
 
-## 装好之后
+脚本下载固定的 Alpine 3.21.3 arm64 minirootfs 并校验 SHA-256，同时检查 PRoot 产物是否完整。
+旧版本脚本使用的 Termux PRoot 包地址已失效；当前流程只从固定 submodule 构建 PRoot。
 
-1. 打开 App → 设置 → 权限 → 系统权限 → **显示在其他应用上层**，授权。
-2. 设置 → 外观 → **桌面宠物** → 导入宠物包 ZIP（内含 `pet.json` + `spritesheet.webp`），启动宠物。
-3. 想让宠物能对话，先在设置里配好默认模型（Provider + API Key）。
-4. 如需系统手势唤起，在设置页申请「默认数字助手」；OEM 可能要求在系统设置中手动确认。
+## 6. 编译
 
-## 已知限制
+```bash
+cd src/android
+./gradlew :app:assembleDebug --no-daemon
+```
 
-- **语音识别依赖设备或云端引擎**。部分国产 ROM 的系统识别不可用（`SpeechRecognizer.isRecognitionAvailable()` 返回 false）。此时要在**设置 → 语音**里给 Voice Input 组绑定一个云端 ASR 模型（例如 OpenAI whisper），宠物的麦克风才能用。
-- 宠物对话直连当前默认模型，**不跑 Agent 工具链**：能问答、能总结，不能执行命令或读写文件。真正干活仍然要在 App 里开正常会话。
-- 只构建 `arm64-v8a`，不支持 32 位设备和模拟器 x86。
+输出：
 
-## License
+```text
+src/android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-OpenMinis 使用 GPL-3.0。分发修改后的 APK 同样受 GPL-3.0 约束，需要一并提供对应源码。
+安装到连接的 arm64 设备：
+
+```bash
+./gradlew :app:installDebug
+# 或
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+## 测试
+
+```bash
+cd src/android
+
+# 当前 Minis/DSH 与版本排序核心 JVM 回归
+./gradlew :app:testDebugUnitTest \
+  --tests com.openminis.app.remote.DshApiAdapterTest \
+  --tests com.openminis.app.data.UpdateCheckerVersionTest
+
+# 编译 instrumentation APK
+./gradlew :app:assembleDebugAndroidTest
+
+# 连接设备后按需运行
+./gradlew :app:connectedDebugAndroidTest
+```
+
+公开仓库没有部分 OAuth customization 和网络 fixture，因此 38 项 Provider 测试不能作为无配置
+环境下的绿色基线。不要用删除测试的方式伪造全绿。
+
+## 常见问题
+
+### `deps/proot/src` 不存在
+
+```bash
+git submodule update --init --recursive
+```
+
+### 找不到 NDK
+
+确认 `ANDROID_NDK_HOME` 指向包含 `toolchains/llvm/prebuilt` 的 NDK r28+ 目录。
+
+### App 能启动，但所有 Shell 命令失败
+
+检查 APK 内是否存在：
+
+```bash
+unzip -l app-debug.apk | grep -E 'libproot|alpine-minirootfs'
+```
+
+至少应包含 `libproot.so`、`libproot-loader.so` 和 Alpine rootfs。重新执行：
+
+```bash
+./deps/build_proot.sh
+./scripts/prepare_android_sandbox.sh
+```
+
+### compileSdk 36 警告 AGP 只测试到 35
+
+这是 AGP 8.7.3 的兼容性警告，不是当前 pet.15 构建失败；升级 AGP 前应单独跑完整 Compose、KSP、
+CMake 和 instrumentation 回归。
+
+## 签名与发布
+
+当前 `release` buildType 仍配置 debug signing，且 Debug APK 会启动 DebugServer。它可以用于本地
+构建和自测，**不能直接当生产发布方案**。正式发布至少需要：
+
+1. 独立 release keystore 和安全的 CI secret；
+2. release variant 关闭 DebugServer；
+3. 更新 versionCode/versionName；
+4. 完整测试、APK/AAB 签名校验、SHA-256 与对应 source tag；
+5. 更新 `README.md`、`RELEASE-NOTES.md` 和 `releases/README.md`。

@@ -1,21 +1,29 @@
-<!--
-  Please read before submitting.
+## Summary
 
-  This repository does not accept pull requests. It is a mirror: development
-  happens in a private tree and is published here on each release, so there is
-  nowhere for a PR to land — it would be overwritten by the next sync.
+<!-- What changes, and why? -->
 
-  This is not about the quality of your work. If you open one anyway, we will
-  close it with a link to CONTRIBUTING.md.
+## Scope
 
-  What helps instead:
+- [ ] Android native behavior
+- [ ] Minis Web / Remote API
+- [ ] PRoot sandbox / native build
+- [ ] Documentation only
 
-    • Bugs and feature requests → open an issue
-      https://github.com/OpenMinis/OpenMinis/issues
+## Verification
 
-    • Use cases and workflows   → OpenMinis/AwesomeMinis  (accepts PRs)
-    • Skills                    → OpenMinis/MinisSkills   (accepts PRs)
-    • Questions and discussion  → the Telegram group, linked in the README
+<!-- List exact Gradle/tests/manual checks. Do not include credentials or unrelated device data. -->
 
-  See CONTRIBUTING.md for the full picture.
--->
+- [ ] `git diff --check`
+- [ ] Relevant JVM tests
+- [ ] `:app:assembleDebugAndroidTest` when Android tests changed
+- [ ] `:app:assembleDebug` when production source/assets changed
+
+## Security and compatibility
+
+- [ ] No API key, OAuth token, tunnel token, DebugServer token, password, or private fixture is committed
+- [ ] Web allow/deny policy and write-only secret fields remain intact
+- [ ] No screenshot, input injection, arbitrary Shell/file, `su`, or Root capability is exposed through Web
+- [ ] Third-party notices and required `@deepseek-ai/dsh-*` compatibility IDs are preserved
+- [ ] Current docs/release metadata are updated where applicable
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md).
