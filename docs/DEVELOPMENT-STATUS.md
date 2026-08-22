@@ -4,14 +4,14 @@
 
 ## 仓库与发布
 
-- Repository: `https://github.com/limuzi013/OpenMinis-Pet`
+- Repository: `https://github.com/limuzi013/minis-for-android`
 - Branch: `master`
 - Release tag: `v1.00-beta`
 - Package: `dev.openminispet.android`
 - Version: `1.00-beta`(versionCode 36)
 - APK: `releases/OpenMinis-Pet-1.00-beta-arm64-debug.apk`
-- Size: `54,437,205` bytes
-- SHA-256: `086ebaf7fc743ded373a1e297f2dbe2ccb653df094de0958760815476aea3a96`
+- Size: `54949540` bytes
+- SHA-256: `bb017abb06c5ca20c3d072fc728e1c2a2f6f321819cb426a2171ed48d6dcb359`
 
 当前 APK 是 arm64 Debug 签名开发包,不是生产 release。
 

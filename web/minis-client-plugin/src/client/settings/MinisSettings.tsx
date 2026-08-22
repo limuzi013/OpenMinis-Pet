@@ -63,7 +63,7 @@ export function MinisSettings(props: MinisSettingsProps) {
           <p>与 Android App 共用同一份设置</p>
         </div>
         <span className={styles.spacer} />
-        <a className={styles.repo} href="https://github.com/limuzi013/OpenMinis-Pet" target="_blank" rel="noopener noreferrer">项目与反馈</a>
+        <a className={styles.repo} href="https://github.com/limuzi013/minis-for-android" target="_blank" rel="noopener noreferrer">项目与反馈</a>
         <button type="button" className={styles.iconButton} disabled={state.busy} onClick={props.refresh} title="刷新" aria-label="刷新">↻</button>
       </header>
       <select className={`${styles.select} ${styles.mobileNavigation}`} aria-label="控制台页面" value={state.tab} onChange={event => props.selectTab(event.currentTarget.value as TabId)}>

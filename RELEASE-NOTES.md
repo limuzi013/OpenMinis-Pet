@@ -1,16 +1,16 @@
-# OpenMinis Pet `v1.00-beta`
+# Minis for Android `v1.00-beta`
 
-发布日期:2026-08-23。这是项目的 **1.00-beta 首个公开版本**,Android arm64 开发/自测构建,与 tag [`v1.00-beta`](https://github.com/limuzi013/OpenMinis-Pet/tree/v1.00-beta) 源码对应。
+发布日期:2026-08-23。这是项目的 **1.00-beta 首个公开版本**,Android arm64 开发/自测构建,与 tag [`v1.00-beta`](https://github.com/limuzi013/minis-for-android/tree/v1.00-beta) 源码对应。
 
 ## 下载与校验
 
-- APK：[`OpenMinis-Pet-1.00-beta-arm64-debug.apk`](https://github.com/limuzi013/OpenMinis-Pet/releases/download/v1.00-beta/OpenMinis-Pet-1.00-beta-arm64-debug.apk)
+- APK：[`OpenMinis-Pet-1.00-beta-arm64-debug.apk`](https://github.com/limuzi013/minis-for-android/releases/download/v1.00-beta/OpenMinis-Pet-1.00-beta-arm64-debug.apk)
 - applicationId：`dev.openminispet.android`
 - versionName：`1.00-beta`
 - versionCode：36
 - ABI：`arm64-v8a`
-- 大小：`54,437,205` bytes
-- SHA-256：`086ebaf7fc743ded373a1e297f2dbe2ccb653df094de0958760815476aea3a96`
+- 大小：`54949540` bytes
+- SHA-256：`bb017abb06c5ca20c3d072fc728e1c2a2f6f321819cb426a2171ed48d6dcb359`
 - 签名：Android Debug keystore；APK Signature Scheme v2
 
 ## 主要变化

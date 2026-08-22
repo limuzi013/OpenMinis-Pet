@@ -98,7 +98,7 @@ object ProviderFactory {
                     model = model,
                     basePath = "https://openrouter.ai/api/v1",
                     extraHeaders = mapOf(
-                        "HTTP-Referer" to "https://github.com/limuzi013/OpenMinis-Pet",
+                        "HTTP-Referer" to "https://github.com/limuzi013/minis-for-android",
                         "X-Title" to "Minis App",
                     ),
                 )

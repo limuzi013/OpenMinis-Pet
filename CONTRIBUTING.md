@@ -4,7 +4,7 @@
 
 ## 报告问题
 
-打开: <https://github.com/limuzi013/OpenMinis-Pet/issues>
+打开: <https://github.com/limuzi013/minis-for-android/issues>
 
 请包含:
 

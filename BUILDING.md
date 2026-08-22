@@ -21,7 +21,7 @@ Gradle distribution.
 ## Clone
 
 ```sh
-git clone --recurse-submodules https://github.com/limuzi013/OpenMinis-Pet.git
+git clone --recurse-submodules https://github.com/limuzi013/minis-for-android.git
 cd OpenMinis-Pet
 ```
 

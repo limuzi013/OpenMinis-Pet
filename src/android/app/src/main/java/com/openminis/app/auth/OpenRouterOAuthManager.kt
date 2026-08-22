@@ -159,7 +159,7 @@ object OpenRouterOAuthManager {
             .url(KEYS_URL)
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .header("Content-Type", "application/json")
-            .header("HTTP-Referer", "https://github.com/limuzi013/OpenMinis-Pet")
+            .header("HTTP-Referer", "https://github.com/limuzi013/minis-for-android")
             .header("X-Title", "Minis App")
             .build()
 

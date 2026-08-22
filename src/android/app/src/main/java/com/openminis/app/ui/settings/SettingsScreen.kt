@@ -558,7 +558,7 @@ private fun SubagentLimitsDialog(
  * triage instead of asking the user to fill in environment details.
  *
  * URL shape:
- *   https://github.com/limuzi013/OpenMinis-Pet/issues/new
+ *   https://github.com/limuzi013/minis-for-android/issues/new
  *     ?template=bug_report.md
  *     &title=[Bug]
  *     &body=<percent-encoded markdown>
@@ -621,7 +621,7 @@ private fun buildBugReportUrl(): String {
     // since URLEncoder turns spaces into '+' which GitHub also accepts but
     // the spec calls for the literal "[Bug] " form.
     val title = java.net.URLEncoder.encode("[Bug] ", "UTF-8")
-    return "https://github.com/limuzi013/OpenMinis-Pet/issues/new" +
+    return "https://github.com/limuzi013/minis-for-android/issues/new" +
         "?template=bug_report.md" +
         "&title=$title" +
         "&body=$encodedBody"
