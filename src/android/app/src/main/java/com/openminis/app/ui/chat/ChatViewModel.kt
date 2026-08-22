@@ -7358,6 +7358,22 @@ class ChatViewModel(
                     }
                     is LLMStreamChunk.Usage -> {
                         lastUsage = chunk.usage
+                        // Publish the same usage sample into the session journal
+                        // (DSH tokenUsage projection reads assistant/chunk
+                        // type=usage with data.turn/step). Real data only: no
+                        // fabricated latency/steps.
+                        runCatching {
+                            sessionEventEmitter.rawUsageChunk(
+                                assistantId,
+                                org.json.JSONObject().apply {
+                                    put("inputTokens", chunk.usage.inputTokens)
+                                    put("outputTokens", chunk.usage.outputTokens)
+                                    put("cacheReadTokens", chunk.usage.cacheReadInputTokens ?: 0)
+                                    put("cacheWriteTokens", chunk.usage.cacheCreationInputTokens ?: 0)
+                                },
+                                turn,
+                            )
+                        }
                         // Update context token count for next turn's dynamicMaxTokens()
                         // and publish to _lastTurnContextTokens so the ContextPolicy
                         // gate in [checkContextBeforeSend] can see the latest pressure

@@ -46,7 +46,18 @@ object FileEditTool {
             val args = JSONObject(argsJson)
             val path = args.optString("path", "")
             val toolTitle = args.optString("tool_title", NAME)
-            if (path.isBlank()) return ToolExecutionResult("Error: 'path' is required", false, toolTitle = toolTitle)
+            if (path.isBlank()) {
+                return ToolExecutionResult("Error: 'path' is required", false, toolTitle = toolTitle)
+            }
+
+            // Per-session permission preset (DSH /permission) gate, mirroring FileWriteTool.
+            if (!SessionPermissionStore.allowsFileWrite(context, sessionId, path)) {
+                return ToolExecutionResult(
+                    "Error: session permission preset `workspace-write` only allows writing under " +
+                        "/var/minis/workspace (and per-session /var/minis/* dirs); refusing to edit $path.",
+                    false, toolTitle = toolTitle,
+                )
+            }
 
             if (PRootKernel.isLinuxPathUnderReadOnlyMount(path)) {
                 return ToolExecutionResult(

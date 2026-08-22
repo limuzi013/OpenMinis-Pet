@@ -810,8 +810,19 @@ internal class ChatSessionEventEmitter(
         }
     }
 
-    /**
-     * Raw provider text hook. This deliberately sits ahead of Compose's
+    /** Raw provider usage hook — feeds the DSH tokenUsage projection. */
+    @Synchronized
+    fun rawUsageChunk(messageId: String, usage: org.json.JSONObject, turn: Int, step: Int = 0) {
+        if (!usage.keys().hasNext()) return
+        emit("assistant/chunk", JSONObject().apply {
+            put("messageId", messageId)
+            put("turn", turn)
+            put("step", step)
+            put("chunk", JSONObject().put("type", "usage").put("usage", usage))
+        })
+    }
+
+    /** Raw provider text hook. This deliberately sits ahead of Compose's
      * throttled projection: every LLM delta becomes an append-only
      * `assistant/chunk` event. Sequencing and live fan-out happen immediately
      * under the hub lock; Room persistence stays on its serial IO worker.

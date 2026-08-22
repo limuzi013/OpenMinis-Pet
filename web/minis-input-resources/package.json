@@ -1,0 +1,27 @@
+{
+  "name": "@openminis/minis-input-resources",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenMinis @ resource mention (files/folders/sessions) for the DeepSeek Harness client composer",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.9.2"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-input-trigger",
+        "@deepseek-ai/dsh-client-connection"
+      ],
+      "platform": "web"
+    }
+  }
+}

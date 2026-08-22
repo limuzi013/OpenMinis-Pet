@@ -306,6 +306,12 @@ object RemoteCapabilityCatalog {
 
         "goal.create", "goal.edit", "goal.pause", "goal.resume", "goal.complete", "goal.clear" -> AGENT_MANAGE
 
+        // DSH generic Connection RPC methods (slash endpoint path). Each maps
+        // to exactly one capability; unlisted endpoints stay denied.
+        "commands/list", "commands/execute" -> CHAT
+        "messageFeedback/list", "messageFeedback/put", "messageFeedback/delete" -> CHAT
+        "goals/create", "goals/edit", "goals/pause", "goals/resume", "goals/complete", "goals/clear" -> AGENT_MANAGE
+
         "settings.describe" -> PREFERENCES
         "settings.openDocument" -> PREFERENCES
         "settings.update", "settings.replace", "settings.mutate" -> {

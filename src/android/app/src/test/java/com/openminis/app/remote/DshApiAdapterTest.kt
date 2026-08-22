@@ -155,7 +155,8 @@ class DshApiAdapterTest {
     /**
      * sessionEventSchema (client.js:5229) locks only `{type, seq, time, data}`,
      * so non-message events must survive untouched — turn boundaries and token
-     * deltas are what drive the streaming UI.
+     * deltas are what drive the streaming UI. Text blocks live at index 1
+     * (reasoning is 0); the projector compacts sparse blocks.
      */
     @Test
     fun `native text deltas gain the numeric block index required by the browser fold`() {
@@ -172,7 +173,7 @@ class DshApiAdapterTest {
         val data = event.getJSONObject("data")
         val translated = data.getJSONObject("chunk")
         assertEquals("text-delta", translated.getString("type"))
-        assertEquals(0, translated.getInt("index"))
+        assertEquals(1, translated.getInt("index"))
         assertEquals("块", translated.getString("text"))
         assertEquals(3, data.getInt("turn"))
         assertEquals(1, data.getInt("step"))

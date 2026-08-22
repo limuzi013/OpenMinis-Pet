@@ -42,6 +42,18 @@ object FileWriteTool {
                 return ToolExecutionResult("Error: 'path' is required", false, toolTitle = toolTitle)
             }
 
+            // Per-session permission preset (DSH /permission) gate. read-only
+            // and workspace-write presets must really refuse out-of-bounds writes.
+            if (!SessionPermissionStore.allowsFileWrite(context, sessionId, path)) {
+                return ToolExecutionResult(
+                    "Error: session permission preset `workspace-write` only allows writing under " +
+                        "/var/minis/workspace (and per-session /var/minis/* dirs). This path is not" +
+                        " allowed. Switch the session to `danger-full-access` on the device if this" +
+                        " write must proceed.",
+                    false, toolTitle = toolTitle,
+                )
+            }
+
             // T219: read-only mount guard. Reject before opening so we don't
             // half-create files inside a Locked external mount and surface a
             // friendly hint pointing the user at Settings. Mirrors iOS

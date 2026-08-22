@@ -156,3 +156,4 @@ src/android/app/provider-customization.properties
 
 # Minis client plugin dependencies and generated artifacts
 web/minis-client-plugin/node_modules/
+web/minis-input-resources/node_modules/
