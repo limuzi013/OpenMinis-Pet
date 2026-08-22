@@ -204,5 +204,6 @@ x-minis-token、proxy-authorization。在记录层统一处理，所有 provider
   Cloudflare）；如需直连 LAN，应等待后续自签 HTTPS 或一次性 PIN 方案。
 - **FGS mediaPlayback 类型**：用于非媒体用途，sideload 可接受；上架 Play 前必须改。
 - **Android 15 BOOT_COMPLETED 的 FGS 类型限制**：需真机验证。
-- **`/api/*` runBlocking**：每个请求占一个 IO 线程（/api/shell 最长 1 小时），
-  属架构级重构，留待后续。
+- **`/api/*` runBlocking**：每个长时 unary 请求会占一个 IO 线程；当前公网 Web 已不开放
+  Shell，但提示、模型测试或网络导入仍可能是长请求。改成完整 suspend server 属架构级重构，
+  留待后续。

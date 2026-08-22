@@ -27,6 +27,7 @@ internal object SkillRpcMethods {
                 put("description", s.description)
                 put("version", s.version)
                 put("importSource", s.importSource.value)
+                put("sourceURL", s.sourceURL ?: JSONObject.NULL)
                 put("isEnabled", s.isEnabled)
                 put("installedAt", s.installedAt)
                 put("updatedAt", s.updatedAt)
@@ -49,6 +50,7 @@ internal object SkillRpcMethods {
             put("description", skill.description)
             put("version", skill.version)
             put("importSource", skill.importSource.value)
+            put("sourceURL", skill.sourceURL ?: JSONObject.NULL)
             put("isEnabled", skill.isEnabled)
             put("installedAt", skill.installedAt)
             put("updatedAt", skill.updatedAt)
@@ -71,6 +73,28 @@ internal object SkillRpcMethods {
             version = version,
             source = SkillRepository.ImportSource.FILE,
         ) ?: throw RPCException(-32602, "A skill with this name already exists or the name is invalid")
+        return JSONObject().put("skill", skillToJson(skill, includeBody = true))
+    }
+
+    suspend fun importUrl(context: Context, params: JSONObject): JSONObject {
+        val url = params.optString("url", "").trim().ifEmpty {
+            throw RPCException(-32602, "Missing 'url' param")
+        }
+        val host = runCatching { android.net.Uri.parse(url).host?.lowercase().orEmpty() }
+            .getOrDefault("")
+        val r = repo(context)
+        val skill = if (host == "github.com" || host == "www.github.com" ||
+            host == "raw.githubusercontent.com" || host == "gist.github.com" ||
+            host == "gist.githubusercontent.com"
+        ) {
+            r.importFromGitHub(url)
+        } else {
+            val content = SafeRemoteImporter.downloadText(url, maxBytes = 512 * 1024)
+            r.importFromContent(content, SkillRepository.ImportSource.URL, sourceURL = url)
+        } ?: throw RPCException(
+            -32602,
+            "The URL did not provide a valid SKILL.md (YAML frontmatter with a name is required)",
+        )
         return JSONObject().put("skill", skillToJson(skill, includeBody = true))
     }
 
@@ -128,6 +152,7 @@ internal object SkillRpcMethods {
             put("description", skill.description)
             put("version", skill.version)
             put("importSource", skill.importSource.value)
+            put("sourceURL", skill.sourceURL ?: JSONObject.NULL)
             put("isEnabled", skill.isEnabled)
             put("installedAt", skill.installedAt)
             put("updatedAt", skill.updatedAt)

@@ -1,0 +1,13 @@
+{
+  "name": "Minis Web",
+  "short_name": "Minis",
+  "description": "OpenMinis Pet 的安全网页控制台",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#10131a",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

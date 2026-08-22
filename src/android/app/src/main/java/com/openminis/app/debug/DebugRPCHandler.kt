@@ -157,6 +157,7 @@ class DebugRPCHandler(private val context: Context) {
             "chat.session.status" -> ChatMutationMethods.status(context, params)
             "chat.session.cancel" -> ChatMutationMethods.cancel(context, params)
             "chat.session.selectModel" -> ChatMutationMethods.selectModel(context, params)
+            "chat.session.selectThinkingLevel" -> ChatMutationMethods.selectThinkingLevel(context, params)
             "chat.session.delete" -> ChatMutationMethods.delete(context, params)
 
             // Chat compact (mirrors iOS chat.compact.* namespace).
@@ -200,6 +201,7 @@ class DebugRPCHandler(private val context: Context) {
             "skills.list" -> SkillRpcMethods.list(context)
             "skills.get" -> SkillRpcMethods.get(context, params)
             "skills.create" -> SkillRpcMethods.create(context, params)
+            "skills.importUrl" -> SkillRpcMethods.importUrl(context, params)
             "skills.update" -> SkillRpcMethods.update(context, params)
             "skills.toggle" -> SkillRpcMethods.toggle(context, params)
             "skills.delete" -> SkillRpcMethods.delete(context, params)
@@ -220,6 +222,7 @@ class DebugRPCHandler(private val context: Context) {
             "mcp.create" -> McpRpcMethods.create(context, params)
             "mcp.update" -> McpRpcMethods.update(context, params)
             "mcp.import" -> McpRpcMethods.importJson(context, params)
+            "mcp.importUrl" -> McpRpcMethods.importUrl(context, params)
             "mcp.toggle" -> McpRpcMethods.toggle(context, params)
             "mcp.delete" -> McpRpcMethods.delete(context, params)
 
@@ -236,11 +239,15 @@ class DebugRPCHandler(private val context: Context) {
             "storage.mounts.setWritable" -> StorageRpcMethods.mountsSetWritable(context, params)
             "storage.mounts.remove" -> StorageRpcMethods.mountsRemove(context, params)
 
-            // Scheduled Tasks
+            // Scheduled Tasks — Web and native screens share ScheduledTaskManager.
             "scheduled.list" -> ScheduledTaskRpcMethods.list(context)
+            "scheduled.get" -> ScheduledTaskRpcMethods.get(context, params)
+            "scheduled.create" -> ScheduledTaskRpcMethods.create(context, params)
+            "scheduled.update" -> ScheduledTaskRpcMethods.update(context, params)
             "scheduled.toggle" -> ScheduledTaskRpcMethods.toggle(context, params)
             "scheduled.delete" -> ScheduledTaskRpcMethods.delete(context, params)
             "scheduled.run" -> ScheduledTaskRpcMethods.run(context, params)
+            "scheduled.runs" -> ScheduledTaskRpcMethods.runs(context, params)
 
             // Agent settings (main/sub agent knobs for the Web Remote)
             "agent.settings.get" -> AgentRpcMethods.settingsGet(context)

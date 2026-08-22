@@ -35,8 +35,13 @@ internal object AgentStateRpcMethods {
     }
 
     private fun goalJson(g: AgentStateStore.Goal): JSONObject = JSONObject().apply {
+        put("id", g.id)
+        put("revision", g.revision)
         put("text", g.text)
         put("active", g.active)
+        put("phase", g.phase)
+        put("maxGoalRounds", g.maxGoalRounds)
+        put("createdAt", g.createdAt)
         put("updatedAt", g.updatedAt)
     }
 

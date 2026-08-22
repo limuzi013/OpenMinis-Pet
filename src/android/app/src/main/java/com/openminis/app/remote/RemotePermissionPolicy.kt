@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Web Remote permission presets (DeepSeek Harness style): a single selector
+ * Minis Web permission presets: a single selector
  * binding a sandbox mode and an approval posture. Default keeps the current
  * remote surface (sandboxed shell + workspace file edits + RPC).
  */

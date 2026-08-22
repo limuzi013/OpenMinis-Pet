@@ -87,6 +87,22 @@ internal object McpRpcMethods {
         }
     }
 
+    suspend fun importUrl(context: Context, params: JSONObject): JSONObject {
+        val url = params.optString("url", "").trim().ifEmpty {
+            throw RPCException(-32602, "Missing 'url' param")
+        }
+        val configJson = SafeRemoteImporter.downloadText(url, maxBytes = 1024 * 1024)
+        val imported = repo(context).importJSON(configJson)
+        if (imported.isEmpty()) {
+            throw RPCException(-32602, "The URL did not provide a valid MCP JSON configuration")
+        }
+        return JSONObject().apply {
+            put("sourceURL", url)
+            put("count", imported.size)
+            put("servers", JSONArray().apply { imported.forEach { put(serverToJson(it)) } })
+        }
+    }
+
     fun toggle(context: Context, params: JSONObject): JSONObject {
         val serverId = params.optString("serverId", "").ifEmpty {
             throw RPCException(-32602, "Missing 'serverId' param")

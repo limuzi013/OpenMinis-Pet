@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme:light)">
+  <meta name="theme-color" content="#161718" media="(prefers-color-scheme:dark)">
+  <title>登录 · Minis Web</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    :root{color-scheme:light dark;--page:#f7f8fa;--layer:#fff;--layer-soft:#f5f6f7;--line:#e4e6e9;--text:#17181a;--text-2:#4e5157;--caption:#81858c;--hover:#f1f2f4;--primary:#4d6bfe;--primary-hover:#3858e9;--error:#d94b4b;--shadow:0 18px 52px #18203b14;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    @media(prefers-color-scheme:dark){:root{--page:#161718;--layer:#202122;--layer-soft:#191a1b;--line:#343638;--text:#f2f3f5;--text-2:#c5c7ca;--caption:#929599;--hover:#2a2c2e;--primary:#6685ff;--primary-hover:#7893ff;--error:#ff7b84;--shadow:0 24px 70px #0007}}
+    *{box-sizing:border-box}html,body{min-height:100%;margin:0}body{min-height:100dvh;background:var(--page);color:var(--text);font:14px/1.5 inherit;display:flex;flex-direction:column}
+    .topbar{height:62px;display:flex;align-items:center;padding:0 max(22px,env(safe-area-inset-left));border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--layer) 88%,transparent);backdrop-filter:blur(16px)}
+    .brand{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600}.mark{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--primary);color:#fff;font-size:16px;font-weight:700}.brand small{display:block;color:var(--caption);font-size:11px;font-weight:400;line-height:14px}
+    .top-spacer{flex:1}.repo{color:var(--caption);font-size:12px;text-decoration:none}.repo:hover{color:var(--text-2)}
+    .stage{flex:1;display:grid;place-items:center;padding:42px 20px 64px}.panel{width:min(420px,100%);border:1px solid var(--line);border-radius:24px;background:var(--layer);padding:30px;box-shadow:var(--shadow)}
+    .intro{margin-bottom:24px}.intro h1{margin:0 0 7px;font-size:22px;line-height:30px;font-weight:600;letter-spacing:-.2px}.intro p{margin:0;color:var(--caption);font-size:13px}
+    .field{display:grid;gap:7px;margin:14px 0}.field label{color:var(--text-2);font-size:12px;font-weight:500}.field input{width:100%;height:42px;border:1px solid var(--line);border-radius:10px;background:var(--layer-soft);color:var(--text);padding:0 12px;font:14px inherit;outline:none;transition:border-color .12s,box-shadow .12s,background .12s}.field input:hover{background:var(--hover)}.field input:focus{border-color:var(--primary);background:var(--layer);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 14%,transparent)}
+    button{width:100%;height:42px;margin-top:8px;border:0;border-radius:10px;background:var(--primary);color:#fff;font:500 14px inherit;cursor:pointer;transition:background .12s,opacity .12s}button:hover:not(:disabled){background:var(--primary-hover)}button:disabled{opacity:.52;cursor:wait}
+    .error{min-height:20px;margin-top:11px;color:var(--error);font-size:12px}.privacy{display:flex;align-items:flex-start;gap:7px;margin:18px 2px 0;padding-top:16px;border-top:1px solid var(--line);color:var(--caption);font-size:11px}.privacy .dot{width:6px;height:6px;flex:none;margin-top:5px;border-radius:50%;background:#37b37e}
+    @media(max-width:520px){.topbar{height:56px;padding:0 16px}.brand small,.repo{display:none}.stage{place-items:start center;padding:11vh 16px 36px}.panel{padding:24px 20px;border-radius:20px}.intro h1{font-size:20px}}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark" aria-hidden="true">M</span><span>Minis Web<small>OpenMinis Pet · Android</small></span></div>
+    <span class="top-spacer"></span>
+    <a class="repo" href="https://github.com/limuzi013/OpenMinis-Pet" target="_blank" rel="noopener noreferrer">项目 · 更新 · 反馈</a>
+  </header>
+  <main class="stage">
+    <section class="panel" aria-labelledby="title">
+      <div class="intro"><h1 id="title">连接到你的手机</h1><p>使用 App「设置 → Web 远程访问」中保存的账号。登录后进入与桌面端一致的工作台。</p></div>
+      <form id="login">
+        <div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required maxlength="80" autofocus></div>
+        <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="512"></div>
+        <button id="submit" type="submit">登录</button>
+        <div id="error" class="error" role="alert" aria-live="polite"></div>
+      </form>
+      <div class="privacy"><span class="dot" aria-hidden="true"></span><span>凭据只发送到这台 OpenMinis Pet；公网访问由你配置的 HTTPS Tunnel 加密。</span></div>
+    </section>
+  </main>
+<script>
+(() => {
+  const form = document.getElementById('login');
+  const user = document.getElementById('username');
+  const password = document.getElementById('password');
+  const button = document.getElementById('submit');
+  const error = document.getElementById('error');
+  try { user.value = localStorage.getItem('minis.web.username') || ''; } catch (_) {}
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); error.textContent = ''; button.disabled = true; button.textContent = '正在连接…';
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({username:user.value.trim(), password:password.value})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 429) throw new Error('尝试次数过多，请稍后再试。');
+        if (response.status === 503) throw new Error('请先在手机 App 中配置 Web 远程登录密码。');
+        throw new Error(data.error === 'invalid username or password' ? '用户名或密码不正确。' : (data.error || '登录失败。'));
+      }
+      try { localStorage.setItem('minis.web.username', user.value.trim()); } catch (_) {}
+      location.reload();
+    } catch (cause) {
+      error.textContent = cause instanceof Error ? cause.message : '无法连接到手机。';
+      password.select();
+    } finally { button.disabled = false; button.textContent = '登录'; }
+  });
+})();
+</script>
+</body>
+</html>

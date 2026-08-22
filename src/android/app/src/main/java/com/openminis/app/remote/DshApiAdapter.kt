@@ -1,12 +1,22 @@
 package com.openminis.app.remote
 
 import android.content.Context
+import com.openminis.app.BuildConfig
+import com.openminis.app.MinisApp
+import com.openminis.app.data.SessionForkManager
 import com.openminis.app.debug.ChatDebugMethods
 import com.openminis.app.debug.ChatMutationMethods
 import com.openminis.app.debug.DebugRPCHandler
 import com.openminis.app.debug.HeadlessChatRunner
+import com.openminis.app.sandbox.PRootKernel
+import com.openminis.app.ui.chat.SessionEventHub
+import com.openminis.app.ui.chat.SessionEventReplay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Translates DSH (DeepSeek Harness) wire-protocol RPC calls into OpenMinis
@@ -19,9 +29,31 @@ import org.json.JSONObject
  *
  *   { "type": "server-response", "rpcId": "...", "result": { "ok": true, "value": {...} } }
  *
- * This adapter performs the translation without modifying the compiled DSH frontend.
+ * CRITICAL: the DSH client runs `UNARY_VALUE_SCHEMAS[method].parse(result.value)`
+ * (zod) on every response, and `rpcErrorSchema.parse` on every error. A response
+ * whose shape does not match the schema throws inside the client and the calling
+ * feature dies silently. Every value built here is therefore shaped against the
+ * exact schema in
+ * `assets/minis/plugins/@deepseek-ai/dsh-client-connection/client.js`; the schema
+ * line number is quoted above each builder. Do not "simplify" these shapes.
+ *
+ * Security: this adapter is reachable from the Web Remote surface, so it must
+ * never expose Provider API keys, environment secret values, or the
+ * device-control debug RPCs (debug.tap / debug.inputText / debug.screenshot /
+ * debug.writeFile). `credentials.describe` deliberately returns only
+ * configured/writable metadata — never a value.
  */
 object DshApiAdapter {
+
+    /** Absolute path the DSH UI shows as the session working directory. */
+    private const val WORKSPACE_PATH = "/var/minis/workspace"
+    private const val LEGACY_HISTORY_MESSAGES = 100
+    private val hostVersion: String get() = BuildConfig.VERSION_NAME
+
+    /** Small live-only index table required by the browser's array-based chunk fold. */
+    private val liveToolBlockIndexes = ConcurrentHashMap<String, ConcurrentHashMap<String, Int>>()
+    /** Serializes the one-time migration of pre-journal sessions. */
+    private val legacyBackfillLocks = ConcurrentHashMap<String, Mutex>()
 
     fun isDshMethod(path: String): Boolean {
         if (!path.startsWith("/api/")) return false
@@ -33,8 +65,7 @@ object DshApiAdapter {
         val rpcId = envelope.optString("rpcId", "")
         val payload = envelope.optJSONObject("payload") ?: JSONObject()
         return try {
-            val value = dispatch(context, method, payload)
-            wrapOk(rpcId, value)
+            wrapOk(rpcId, dispatch(context, method, payload))
         } catch (e: Exception) {
             wrapError(rpcId, e.message ?: "internal error")
         }
@@ -51,509 +82,1729 @@ object DshApiAdapter {
             "session.prompt" -> sessionPrompt(context, payload)
             "session.cancel" -> sessionCancel(context, payload)
             "session.search" -> sessionSearch(context, payload)
-            "session.attachment" -> JSONObject().put("id", "att_${System.currentTimeMillis()}")
-            "session.updateQueue" -> JSONObject().put("accepted", true)
             "session.fork" -> sessionFork(context, payload)
+            // sessionUpdateQueueValueSchema (client.js:5453) — `{ accepted: true }`.
+            "session.updateQueue" -> JSONObject().put("accepted", true)
+            // Prompt image parts are accepted directly by session.prompt. This
+            // lookup method is only for a durable upstream attachment id, which
+            // OpenMinis does not persist under that foreign id model.
+            "session.attachment" -> throw IllegalArgumentException("该历史图片没有可读取的 Minis 附件引用")
+
             "host.describe" -> hostDescribe(context)
             "host.listDirectory" -> hostListDirectory(context, payload)
+            // hostOpenPathValueSchema (client.js:5738) — `{ opened: true }`.
             "host.openPath" -> JSONObject().put("opened", true)
-            "host.pickDirectory" -> JSONObject().put("path", "/var/minis/workspace")
-            "host.createDirectory" -> JSONObject().put("created", true)
+            // hostPickDirectoryValueSchema (client.js:5714) — `{ path: string|null }`.
+            // Web cannot drive Android's SAF picker, so this always reports "cancelled".
+            "host.pickDirectory" -> JSONObject().put("path", JSONObject.NULL)
+            // hostCreateDirectoryValueSchema (client.js:5735) — `{ path: string }`.
+            "host.createDirectory" -> hostCreateDirectory(context, payload)
+
             "workspace.list" -> workspaceList(context)
             "workspace.create" -> workspaceCreate(context, payload)
-            "workspace.rename" -> JSONObject().put("renamed", true)
-            "workspace.delete" -> JSONObject().put("deleted", true)
-            "workspace.insertBefore" -> JSONObject().put("moved", true)
-            "workspace.insertSessionBefore" -> JSONObject().put("moved", true)
-            "workspace.archiveSession" -> JSONObject().put("archived", true)
+            "workspace.rename" -> workspaceRename(context, payload)
+            "workspace.delete" -> workspaceDelete(context, payload)
+            "workspace.insertBefore" -> workspaceInsertBefore(context, payload)
+            "workspace.insertSessionBefore" -> workspaceInsertSessionBefore(context, payload)
+            "workspace.archiveSession" -> workspaceArchiveSession(context, payload)
+
             "skill.list" -> skillList(context)
-            "agentPreset.list" -> agentPresetList(context)
-            "agentPreset.select" -> JSONObject().put("selected", true)
-            "agentPreset.read" -> JSONObject()
-            "agentPreset.copy" -> JSONObject().put("id", "preset_copy")
-            "agentPreset.openDocument" -> JSONObject().put("opened", true)
-            "agentPreset.remove" -> JSONObject().put("removed", true)
+
+            "agentPreset.list" -> agentPresetList()
+            // agentPresetSelectValueSchema (client.js:5782) — `{ agentPreset: string }`.
+            "agentPreset.select" -> JSONObject()
+                .put("agentPreset", payload.optString("agentPreset", "default"))
+            "agentPreset.read" -> agentPresetRead(payload)
+            "agentPreset.copy" -> JSONObject()
+                .put("agentPreset", payload.optString("agentPreset", "default"))
+            // agentPresetOpenDocumentValueSchema (client.js:5801) — union; the
+            // false branch carries the path the user should open themselves.
+            "agentPreset.openDocument" -> JSONObject()
+                .put("opened", false)
+                .put("path", "$WORKSPACE_PATH/.minis/agents")
+            // agentPresetRemoveValueSchema (client.js:5807) — `{}`.
+            "agentPreset.remove" -> JSONObject()
+
             "goal.create" -> goalCreate(context, payload)
             "goal.edit" -> goalEdit(context, payload)
-            "goal.pause" -> JSONObject().put("paused", true)
-            "goal.resume" -> JSONObject().put("resumed", true)
-            "goal.complete" -> JSONObject().put("completed", true)
+            "goal.pause" -> goalSetPhase(payload, "pause")
+            "goal.resume" -> goalSetPhase(payload, "resume")
+            "goal.complete" -> goalSetPhase(payload, "complete")
             "goal.clear" -> goalClear(context, payload)
+
             "settings.describe" -> settingsDescribe(context)
-            "settings.openDocument" -> JSONObject().put("opened", true)
-            "settings.update" -> JSONObject().put("updated", true)
-            "settings.replace" -> JSONObject().put("replaced", true)
-            "settings.mutate" -> JSONObject().put("mutated", true)
+            // Android settings do not have a browser-openable backing file.
+            "settings.openDocument" -> throw IllegalArgumentException("设置由 Android App 管理，没有可打开的配置文件")
+            "settings.update" -> settingsWrite(context, payload, "update")
+            "settings.replace" -> settingsWrite(context, payload, "replace")
+            "settings.mutate" -> settingsWrite(context, payload, "mutate")
+
             "credentials.describe" -> credentialsDescribe(context)
-            "credentials.set" -> JSONObject().put("set", true)
-            "credentials.unset" -> JSONObject().put("unset", true)
+            // credentialsSet/UnsetValueSchema (client.js:5947/5950) — `{}`.
+            // Writes are refused: the Web surface must not set device secrets.
+            "credentials.set", "credentials.unset" ->
+                throw IllegalArgumentException("credential changes must be made in the Android app")
+
             "llm.providers" -> llmProviders(context)
             "llm.models" -> llmModels(context)
+            // llmDiscoverModelsValueSchema (client.js:5990) — `{ models: [] }`.
             "llm.discoverModels" -> JSONObject().put("models", JSONArray())
-            "subagent.list" -> JSONObject().put("items", JSONArray())
-            "subagent.history" -> JSONObject().put("events", JSONArray()).put("hasMore", false)
+
+            // subagentListValueSchema (client.js:6024).
+            "subagent.list" -> JSONObject()
+                .put("entries", JSONArray())
+                .put("parentAvailable", false)
+            // subagentHistoryValueSchema (client.js:6036).
+            "subagent.history" -> JSONObject()
+                .put("events", JSONArray())
+                .put("hasMore", false)
             "subagent.prompt" -> JSONObject().put("messageId", "sub_${System.currentTimeMillis()}")
-            "subagent.interrupt" -> JSONObject().put("interrupted", true)
+            // subagentInterruptValueSchema (client.js:6054) — `{ accepted: true }`.
+            "subagent.interrupt" -> JSONObject().put("accepted", true)
+
             else -> throw IllegalArgumentException("unknown method: $method")
         }
     }
 
+    // ---------------------------------------------------------------- sessions
+
+    /**
+     * sessionListValueSchema (client.js:5252) — `{ items: SessionSummary[] }`,
+     * where each row is `{ sessionId, updatedAt, running, blank, … }`.
+     *
+     * `blank` gates the "empty session" placeholder in the sidebar. The backend
+     * has no messageCount field; `lastMessagePreview` being absent is the cheap
+     * emptiness probe sessionsList already computes.
+     */
     private suspend fun sessionList(context: Context): JSONObject {
         val raw = ChatDebugMethods.sessionsList(
-            context, JSONObject().put("limit", 100).put("includeEmpty", true)
+            context, JSONObject().put("limit", 200).put("includeEmpty", true)
         )
         val sessions = raw.optJSONArray("sessions") ?: JSONArray()
         val items = JSONArray()
         for (i in 0 until sessions.length()) {
             val s = sessions.getJSONObject(i)
-            items.put(JSONObject().apply {
-                put("sessionId", s.optString("id", s.optString("sessionId")))
-                put("updatedAt", s.optLong("updatedAt", System.currentTimeMillis()))
-                put("running", s.optBoolean("isRunning", false))
-                put("blank", s.optInt("messageCount", 0) == 0)
-                val projections = JSONObject().apply {
-                    put("asOfSeq", -1)
-                    put("values", JSONObject().apply {
-                        put("title", s.optString("title", ""))
-                        put("tokenUsage", JSONObject().apply {
-                            put("inputTokens", 0)
-                            put("outputTokens", 0)
-                        })
-                    })
-                }
-                put("projections", projections)
-            })
+            items.put(sessionSummary(s))
         }
         return JSONObject().put("items", items)
     }
 
-    private suspend fun sessionCreate(context: Context, payload: JSONObject): JSONObject {
-        val sid = HeadlessChatRunner.ensureSession(context, null)
-        return JSONObject().put("sessionId", sid)
+    private fun sessionSummary(s: JSONObject): JSONObject = JSONObject().apply {
+        put("sessionId", s.optString("id", s.optString("sessionId")))
+        put("updatedAt", s.optLong("updatedAt", System.currentTimeMillis()))
+        put("running", s.optBoolean("isRunning", false))
+        put("blank", s.optString("lastMessagePreview", "").isEmpty())
+        put("cwd", WORKSPACE_PATH)
+        put("projections", projectionsBlock(
+            s.optString("title", ""),
+            s.optString("modelName", ""),
+            s.optString("id", s.optString("sessionId", "")),
+        ))
     }
 
+    /**
+     * sessionProjectionsBlockSchema (client.js:5350) —
+     * `{ asOfSeq: int >= -1, values: Record<string, unknown> }`.
+     * `title` is the projection the sidebar reads for a session's label.
+     */
+    private fun projectionsBlock(
+        title: String,
+        modelName: String,
+        sessionId: String = "",
+    ): JSONObject = JSONObject().apply {
+        put("asOfSeq", -1)
+        put("values", JSONObject().apply {
+            if (title.isNotEmpty()) put("title", title)
+            if (modelName.isNotEmpty()) {
+                put("modelSelection", JSONObject()
+                    .put("provider", "openminis")
+                    .put("model", modelName))
+            }
+            goalProjection(sessionId)?.let { put("goal", it) }
+        })
+    }
+
+    /** Whole-value goal projection consumed by the stock DSH goal bar. */
+    private fun goalProjection(sessionId: String): JSONObject? {
+        if (sessionId.isEmpty()) return null
+        val goal = com.openminis.app.tools.AgentStateStore.goalGet(sessionId)
+        if (goal.text.isBlank() || goal.id.isBlank() || goal.revision <= 0) return null
+        return JSONObject().apply {
+            put("goal", JSONObject().apply {
+                put("id", goal.id)
+                put("revision", goal.revision)
+                put("objective", goal.text)
+                put("phase", goal.phase)
+                put("maxGoalRounds", goal.maxGoalRounds)
+            })
+            put("roundsStarted", 0)
+            put("createdAt", goal.createdAt)
+            put("updatedAt", goal.updatedAt)
+        }
+    }
+
+    /** sessionCreateValueSchema (client.js:5269) — `{ sessionId, agentPreset? }`. */
+    private suspend fun sessionCreate(context: Context, payload: JSONObject): JSONObject {
+        val sid = HeadlessChatRunner.ensureSession(context, null)
+        val workspaceId = payload.optString("workspaceId", "")
+        if (workspaceId.isNotEmpty()) {
+            val app = context.applicationContext as? MinisApp
+                ?: throw IllegalStateException("MinisApp is not ready")
+            if (app.chatRepository.getFolder(workspaceId) == null) {
+                throw IllegalArgumentException("workspace not found")
+            }
+            app.chatRepository.setFolderForSessions(workspaceId, listOf(sid))
+        }
+        return JSONObject().apply {
+            put("sessionId", sid)
+            payload.optString("agentPreset", "").takeIf { it.isNotEmpty() }?.let {
+                put("agentPreset", it)
+            }
+        }
+    }
+
+    /** sessionForkValueSchema (client.js:5287) — `{ sessionId }`. */
+    private suspend fun sessionFork(context: Context, payload: JSONObject): JSONObject {
+        val sourceId = payload.optString("sessionId", "").ifEmpty {
+            throw IllegalArgumentException("sessionId required")
+        }
+        val app = context.applicationContext as? MinisApp
+            ?: throw IllegalStateException("MinisApp is not ready")
+        if (!app.subsystemsReady()) throw IllegalStateException("Minis app data is still starting")
+        val newId = SessionForkManager(context, app.chatRepository, app.skillRepository)
+            .duplicateSession(sourceId)
+            ?: throw IllegalArgumentException("session not found")
+        return JSONObject().put("sessionId", newId)
+    }
+
+    /**
+     * sessionHistoryValueSchema (client.js:5366) —
+     * `{ events: HistoryEntry[], hasMore, projections? }` where each entry is
+     * `{ event: SessionEvent, view? }`.
+     */
     private suspend fun sessionHistory(context: Context, payload: JSONObject): JSONObject {
         val sid = payload.optString("sessionId")
         if (sid.isEmpty()) throw IllegalArgumentException("sessionId required")
-        val maxMessages = payload.optInt("maxMessages", 500)
-        val raw = ChatDebugMethods.messagesList(
-            context, JSONObject()
-                .put("sessionId", sid)
-                .put("limit", maxMessages)
-                .put("includeTools", true)
-                .put("includeReasoning", true)
-        )
-        val messages = raw.optJSONArray("messages") ?: JSONArray()
+
+        // History and the live mux must share the native journal's sequence
+        // space. Re-numbering database messages from zero makes the browser
+        // treat the first live event as a gap (or as a duplicate) and can wipe
+        // an already-rendered turn during its automatic repair fetch.
+        val watermark = ensureHistoryJournal(context, sid)
+        val retained = if (watermark.oldestAvailableSeq > 0L) {
+            HeadlessChatRunner.sessionEvents(context, sid, watermark.oldestAvailableSeq - 1L)
+        } else {
+            watermark
+        }
+        val beforeSeq = if (payload.has("beforeSeq") && !payload.isNull("beforeSeq")) {
+            payload.optLong("beforeSeq", Long.MAX_VALUE)
+        } else {
+            Long.MAX_VALUE
+        }
+        val candidates = retained.events.filter { it.seq < beforeSeq }
+        val maxMessages = payload.optInt("maxMessages", 50).coerceIn(1, 500)
+        var start = 0
+        var messages = 0
+        for (index in candidates.indices.reversed()) {
+            when (candidates[index].type) {
+                "user/message", "system/message", "assistant/message" -> messages++
+                "turn/start" -> if (messages >= maxMessages) {
+                    start = index
+                    break
+                }
+            }
+        }
         val events = JSONArray()
-        for (i in 0 until messages.length()) {
-            val msg = messages.getJSONObject(i)
-            val event = messageToDshEvent(msg, i)
-            events.put(JSONObject().apply {
-                put("event", event)
-            })
+        for (event in candidates.subList(start, candidates.size)) {
+            val translated = nativeEventToMuxFrame(sid, event.toEventJson())
+                .getJSONObject("event")
+            events.put(historyEntry(translated))
         }
-        val status = ChatMutationMethods.status(context, JSONObject().put("sessionId", sid))
-        val projections = JSONObject().apply {
-            put("asOfSeq", events.length())
-            put("values", JSONObject().apply {
-                put("title", status.optString("title", ""))
-                put("modelSelection", JSONObject().apply {
-                    put("provider", "openminis")
-                    put("model", status.optString("modelName", ""))
-                })
-                put("tokenUsage", JSONObject().apply {
-                    put("inputTokens", 0)
-                    put("outputTokens", 0)
-                })
-                put("agentRunning", status.optBoolean("isRunning", false))
-            })
+
+        var title = ""
+        var modelName = ""
+        var running = false
+        try {
+            val status = ChatMutationMethods.status(context, JSONObject().put("sessionId", sid))
+            title = status.optString("title", "")
+            modelName = status.optString("modelName", "")
+            running = status.optBoolean("isRunning", false)
+        } catch (_: Exception) {
         }
+
+        val isTailPage = beforeSeq > watermark.latestSeq
         return JSONObject().apply {
             put("events", events)
-            put("hasMore", false)
-            put("projections", projections)
+            put("hasMore", start > 0)
+            if (isTailPage) {
+                put("projections", projectionsBlock(title, modelName, sid).apply {
+                    put("asOfSeq", watermark.latestSeq.coerceAtLeast(-1L))
+                    optJSONObject("values")?.put("agentRunning", running)
+                })
+            }
         }
     }
 
-    private fun messageToDshEvent(msg: JSONObject, seq: Int): JSONObject {
-        val role = msg.optString("role", "user")
-        val content = JSONArray()
-        val text = msg.optString("content", msg.optString("text", ""))
-        if (text.isNotEmpty()) {
-            content.put(JSONObject().put("type", "text").put("text", text))
+    /**
+     * Sessions created before the durable event journal existed still have
+     * canonical rows in the messages table. Seed a bounded recent tail into
+     * the real journal once so old conversations render without inventing a
+     * second sequence space. Subsequent live events continue at the journal's
+     * next sequence and reconnect paging remains contiguous.
+     */
+    private suspend fun ensureHistoryJournal(context: Context, sessionId: String): SessionEventReplay {
+        val initial = HeadlessChatRunner.sessionEvents(context, sessionId, null)
+        if (initial.oldestAvailableSeq > 0L) return initial
+
+        val lock = legacyBackfillLocks.getOrPut(sessionId) { Mutex() }
+        return try {
+            lock.withLock {
+                val current = HeadlessChatRunner.sessionEvents(context, sessionId, null)
+                if (current.oldestAvailableSeq > 0L) return@withLock current
+
+                val probe = ChatDebugMethods.messagesList(
+                    context,
+                    JSONObject()
+                        .put("sessionId", sessionId)
+                        .put("limit", 1)
+                        .put("includeTools", true)
+                        .put("includeReasoning", true),
+                )
+                val total = probe.optInt("totalCount", 0)
+                if (total <= 0) return@withLock current
+                val raw = if (total == 1) {
+                    probe
+                } else {
+                    ChatDebugMethods.messagesList(
+                        context,
+                        JSONObject()
+                            .put("sessionId", sessionId)
+                            .put("offset", (total - LEGACY_HISTORY_MESSAGES).coerceAtLeast(0))
+                            .put("limit", LEGACY_HISTORY_MESSAGES)
+                            .put("includeTools", true)
+                            .put("includeReasoning", true),
+                    )
+                }
+                backfillLegacyMessages(sessionId, raw.optJSONArray("messages") ?: JSONArray())
+                HeadlessChatRunner.sessionEvents(context, sessionId, null)
+            }
+        } finally {
+            legacyBackfillLocks.remove(sessionId, lock)
         }
-        val toolCalls = msg.optJSONArray("toolCalls")
-        if (toolCalls != null) {
-            for (j in 0 until toolCalls.length()) {
-                val tc = toolCalls.getJSONObject(j)
-                content.put(JSONObject().apply {
-                    put("type", "tool_use")
-                    put("id", tc.optString("id", "tc_$j"))
-                    put("name", tc.optString("name", "unknown"))
-                    put("input", tc.optString("arguments", "{}"))
-                })
+    }
+
+    private fun backfillLegacyMessages(sessionId: String, messages: JSONArray) {
+        var turn = 0
+        var turnOpen = false
+
+        fun startTurn() {
+            if (turnOpen) return
+            turn++
+            SessionEventHub.append(sessionId, "turn/start", JSONObject().put("turn", turn))
+            turnOpen = true
+        }
+
+        fun endTurn() {
+            if (!turnOpen) return
+            SessionEventHub.append(
+                sessionId,
+                "turn/end",
+                JSONObject().put("turn", turn).put("reason", "completed"),
+            )
+            turnOpen = false
+        }
+
+        for (index in 0 until messages.length()) {
+            val source = messages.optJSONObject(index) ?: continue
+            val role = source.optString("role", "user")
+            val messageId = source.optString("id", "legacy_$index")
+            val text = source.optString("content", "")
+
+            when (role) {
+                "user" -> {
+                    endTurn()
+                    startTurn()
+                    val message = JSONObject()
+                        .put("id", messageId)
+                        .put("role", "user")
+                        .put("content", text)
+                    source.optJSONArray("attachments")?.let { message.put("attachments", JSONArray(it.toString())) }
+                    SessionEventHub.append(
+                        sessionId,
+                        "user/message",
+                        JSONObject().put("turn", turn).put("message", message),
+                    )
+                }
+                "system" -> {
+                    val message = JSONObject()
+                        .put("id", messageId)
+                        .put("role", "system")
+                        .put("content", text)
+                    SessionEventHub.append(sessionId, "system/message", JSONObject().put("message", message))
+                }
+                "assistant" -> {
+                    startTurn()
+                    val reasoning = source.optString("reasoningContent", "")
+                        .takeUnless { it == "null" }
+                        .orEmpty()
+                    val calls = source.optJSONArray("toolCalls")?.let { JSONArray(it.toString()) } ?: JSONArray()
+                    val results = source.optJSONArray("toolResults")?.let { JSONArray(it.toString()) } ?: JSONArray()
+                    val content = JSONArray().apply {
+                        if (text.isNotEmpty()) put(JSONObject().put("type", "text").put("text", text))
+                        if (reasoning.isNotEmpty()) put(JSONObject().put("type", "thinking").put("text", reasoning))
+                        for (callIndex in 0 until calls.length()) {
+                            val call = calls.optJSONObject(callIndex) ?: continue
+                            put(JSONObject().put("type", "tool_use").put("value", call))
+                        }
+                    }
+                    val data = JSONObject()
+                        .put("turn", turn)
+                        .put("messageId", messageId)
+                        .put("content", text)
+                        .put("isStreaming", false)
+                        .put("message", JSONObject()
+                            .put("id", messageId)
+                            .put("role", "assistant")
+                            .put("content", content))
+                    if (reasoning.isNotEmpty()) data.put("reasoning", reasoning)
+                    if (calls.length() > 0) data.put("toolCalls", calls)
+                    if (results.length() > 0) data.put("toolResults", results)
+                    source.optJSONObject("tokenUsage")?.let { data.put("usage", it) }
+                    SessionEventHub.append(sessionId, "assistant/message", data)
+
+                    for (resultIndex in 0 until results.length()) {
+                        val result = results.optJSONObject(resultIndex) ?: continue
+                        val callId = toolCallId(result, messageId, resultIndex)
+                        val name = result.optString("name", result.optString("toolName", "tool"))
+                        SessionEventHub.append(
+                            sessionId,
+                            "tool/result",
+                            JSONObject()
+                                .put("turn", turn)
+                                .put("messageId", messageId)
+                                .put("call", JSONObject()
+                                    .put("id", callId)
+                                    .put("callId", callId)
+                                    .put("toolUseId", callId)
+                                    .put("name", name))
+                                .put("result", JSONObject()
+                                    .put("output", result.optString("output", result.optString("content", "")))
+                                    .put("success", result.optBoolean("success", !result.optBoolean("isError", false)))
+                                    .put("isError", result.optBoolean("isError", !result.optBoolean("success", true)))),
+                        )
+                    }
+                    endTurn()
+                }
             }
         }
-        val toolResults = msg.optJSONArray("toolResults")
-        if (toolResults != null) {
-            for (j in 0 until toolResults.length()) {
-                val tr = toolResults.getJSONObject(j)
-                content.put(JSONObject().apply {
-                    put("type", "tool_result")
-                    put("tool_use_id", tr.optString("callId", "tc_$j"))
-                    put("content", tr.optString("output", ""))
-                })
+        endTurn()
+    }
+
+    /** Tool call/result correlation id, honouring the normalizer's alias set. */
+    private fun toolCallId(block: JSONObject, baseId: String, index: Int): String {
+        val id = block.optString("toolUseId", "").ifEmpty { block.optString("id", "") }
+        return id.ifEmpty { "${baseId}_tc$index" }
+    }
+
+    /** Tool arguments as raw text — the normalizer stores them under `input`. */
+    private fun rawArguments(call: JSONObject): String {
+        if (!call.has("input")) return "{}"
+        val value = call.get("input")
+        return if (value is String) value else value.toString()
+    }
+
+    private fun textBlock(text: String): JSONObject =
+        JSONObject().put("type", "text").put("text", text)
+
+    /** Historical Android attachments have no foreign attachment id; keep them visible as notes. */
+    private fun appendAttachmentNotes(target: JSONArray, attachments: JSONArray?) {
+        if (attachments == null) return
+        for (i in 0 until attachments.length()) {
+            val attachment = attachments.optJSONObject(i) ?: continue
+            val value = attachment.optJSONObject("value") ?: attachment
+            val name = value.optString("name", "").ifEmpty {
+                value.optString("fileName", "").ifEmpty { "图片 ${i + 1}" }
             }
+            target.put(textBlock("[附件：$name]"))
         }
-        val thinkingContent = msg.optString("reasoning", "")
-        if (thinkingContent.isNotEmpty()) {
-            val existing = JSONArray()
-            existing.put(JSONObject().put("type", "thinking").put("thinking", thinkingContent))
-            for (k in 0 until content.length()) existing.put(content.get(k))
-            return JSONObject().apply {
-                put("type", "message")
-                put("seq", seq)
-                put("time", msg.optLong("timestamp", System.currentTimeMillis()) / 1000.0)
-                put("data", JSONObject().apply {
-                    put("id", msg.optString("id", "msg_$seq"))
-                    put("role", role)
-                    put("content", existing)
-                    put("source", JSONObject().put("kind", "minis"))
-                })
-            }
-        }
-        return JSONObject().apply {
-            put("type", "message")
+    }
+
+    /** messageSchema (client.js:5568) — role is system|user|assistant only. */
+    private fun dshMessage(
+        id: String,
+        role: String,
+        content: JSONArray,
+        sourceKind: String,
+        callId: String? = null,
+    ): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("role", role)
+        put("content", content)
+        put("source", JSONObject().put("kind", sourceKind).apply {
+            if (!callId.isNullOrBlank()) put("callId", callId)
+        })
+    }
+
+    /**
+     * sessionEventSchema (client.js:5229). `surfaceOp` is required for a
+     * message-producing event to reach the transcript.
+     */
+    private fun dshEvent(type: String, seq: Long, timeMs: Long, data: JSONObject): JSONObject =
+        JSONObject().apply {
+            put("type", type)
             put("seq", seq)
-            put("time", msg.optLong("timestamp", System.currentTimeMillis()) / 1000.0)
-            put("data", JSONObject().apply {
-                put("id", msg.optString("id", "msg_$seq"))
-                put("role", role)
-                put("content", content)
-                put("source", JSONObject().put("kind", "minis"))
-            })
+            put("time", timeMs)
+            put("data", data)
+            put("surfaceOp", "append")
+        }
+
+    // ------------------------------------------------- live event translation
+
+    /**
+     * Translate one native [com.openminis.app.ui.chat.SessionEvent] JSON object
+     * into the `session/event` mux-frame payload DSH expects.
+     *
+     * The native journal already uses DSH's event *names* (`user/message`,
+     * `assistant/message`, `tool/result`, the turn boundaries, and the
+     * `text-delta` / `reasoning-delta` / `tool-call-delta` chunks, which DSH's
+     * `isTokenDelta` recognises verbatim), but the three message-producing
+     * events carry a different *payload* shape:
+     *
+     *  - native `user/message` data is `{ turn, message }`, while
+     *    `deriveEventMessage` (client.js:344) reads the message straight off
+     *    `data` for that type;
+     *  - native message `content` is a plain string for user turns and uses
+     *    Anthropic block names (`thinking`, `tool_use`) for assistant turns,
+     *    where DSH wants `reasoning` and `tool-call` (client.js:6887);
+     *  - none of them carry `source` or `surfaceOp`, and without `surfaceOp`
+     *    `isSurfaceEvent` (client.js:10230) drops the event from the transcript.
+     *
+     * Anything else is passed through unchanged: sessionEventSchema only locks
+     * `{ type, seq, time, data }`, so unknown types parse cleanly and DSH
+     * ignores the ones it has no fold for.
+     */
+    fun nativeEventToMuxFrame(sessionId: String, event: JSONObject): JSONObject {
+        val type = event.optString("type")
+        val seq = event.optLong("seq")
+        val time = event.optLong("time")
+        val data = event.optJSONObject("data") ?: JSONObject()
+
+        val translated: JSONObject? = when (type) {
+            "user/message" -> data.optJSONObject("message")?.let { native ->
+                val message = nativeMessageToDsh(native, "user", "user")
+                copyTurnStep(data, message)
+                dshEvent("user/message", seq, time, message)
+            }
+            "system/message" -> data.optJSONObject("message")?.let { native ->
+                val message = nativeMessageToDsh(native, "system", "system")
+                copyTurnStep(data, message)
+                dshEvent("user/message", seq, time, message)
+            }
+            "assistant/message" -> data.optJSONObject("message")?.let { native ->
+                val translatedData = JSONObject().put("message", nativeAssistantMessageToDsh(native))
+                copyTurnStep(data, translatedData)
+                data.optJSONObject("usage")?.let { translatedData.put("usage", it) }
+                liveToolBlockIndexes.remove(liveMessageKey(sessionId, data.optString("messageId", native.optString("id"))))
+                dshEvent("assistant/message", seq, time, translatedData)
+            }
+            "assistant/chunk" -> translateAssistantChunk(sessionId, seq, time, data)
+            "tool/call" -> translateToolCall(seq, time, data)
+            "tool/result" -> nativeToolResultToDsh(data)?.let { message ->
+                val translatedData = JSONObject().put("message", message)
+                copyTurnStep(data, translatedData)
+                dshEvent("tool/result", seq, time, translatedData)
+            }
+            "turn/end" -> {
+                liveToolBlockIndexes.keys
+                    .filter { it.startsWith("$sessionId\u0000") }
+                    .forEach(liveToolBlockIndexes::remove)
+                val translatedData = JSONObject(data.toString())
+                val rawReason = data.opt("reason")
+                if (rawReason !is JSONObject) {
+                    val kind = rawReason?.toString()?.lowercase()?.let {
+                        when {
+                            "cancel" in it -> "cancelled"
+                            "error" in it || "fail" in it -> "error"
+                            else -> "completed"
+                        }
+                    } ?: "completed"
+                    translatedData.put("reason", JSONObject().put("kind", kind))
+                }
+                plainDshEvent(type, seq, time, translatedData)
+            }
+            else -> null
+        }
+
+        val finalEvent = translated ?: plainDshEvent(type, seq, time, data)
+        return JSONObject().apply {
+            put("type", "session/event")
+            put("sessionId", sessionId)
+            put("event", finalEvent)
         }
     }
 
+    private fun plainDshEvent(type: String, seq: Long, time: Long, data: JSONObject): JSONObject =
+        JSONObject().put("type", type).put("seq", seq).put("time", time).put("data", data)
+
+    private fun copyTurnStep(source: JSONObject, target: JSONObject) {
+        if (source.has("turn")) target.put("turn", source.optInt("turn", 0))
+        if (source.has("step")) target.put("step", source.optInt("step", 0))
+    }
+
+    private fun translateToolCall(seq: Long, time: Long, data: JSONObject): JSONObject? {
+        val call = data.optJSONObject("call") ?: return null
+        val callId = call.optString("callId", "")
+            .ifEmpty { call.optString("toolUseId", "") }
+            .ifEmpty { call.optString("id", "") }
+        if (callId.isEmpty()) return null
+        val translated = JSONObject()
+            .put("callId", callId)
+            .put("name", call.optString("name", call.optString("toolName", "tool")))
+            .put("arguments", call.optString("toolArgs", "").ifEmpty { rawArguments(call) })
+        copyTurnStep(data, translated)
+        return plainDshEvent("tool/call", seq, time, translated)
+    }
+
+    private fun translateAssistantChunk(
+        sessionId: String,
+        seq: Long,
+        time: Long,
+        data: JSONObject,
+    ): JSONObject? {
+        val chunk = data.optJSONObject("chunk") ?: return null
+        val messageId = data.optString("messageId", "")
+        val translatedChunk = when (chunk.optString("type")) {
+            "text-delta" -> JSONObject()
+                .put("type", "text-delta")
+                .put("index", 0)
+                .put("text", chunk.optString("text", ""))
+            "reasoning-delta" -> JSONObject()
+                .put("type", "reasoning-delta")
+                .put("index", 1)
+                .put("text", chunk.optString("text", ""))
+            "tool-call-delta" -> {
+                val callId = chunk.optString("callId", "")
+                    .ifEmpty { chunk.optString("toolUseId", "") }
+                if (callId.isEmpty()) return null
+                val key = liveMessageKey(sessionId, messageId)
+                val byCall = liveToolBlockIndexes.getOrPut(key) { ConcurrentHashMap() }
+                val index = byCall.getOrPut(callId) { 2 + byCall.size }
+                JSONObject()
+                    .put("type", "tool-call-delta")
+                    .put("index", index)
+                    .put("id", callId)
+                    .put("argumentsDelta", chunk.optString("argumentsDelta", chunk.optString("text", "")))
+                    .apply {
+                        chunk.optString("name", "").takeIf { it.isNotEmpty() }
+                            ?.let { put("name", it) }
+                    }
+            }
+            // Streaming tool stdout has its own native terminal result event;
+            // the browser assistant-chunk fold has no tool-result-delta arm.
+            "tool-result-delta" -> return null
+            else -> return null
+        }
+        val translatedData = JSONObject().put("messageId", messageId).put("chunk", translatedChunk)
+        copyTurnStep(data, translatedData)
+        return plainDshEvent("assistant/chunk", seq, time, translatedData)
+    }
+
+    private fun liveMessageKey(sessionId: String, messageId: String): String =
+        "$sessionId\u0000$messageId"
+
+    /** Native user/system message (string content) into a DSH message. */
+    private fun nativeMessageToDsh(
+        message: JSONObject,
+        role: String,
+        sourceKind: String,
+    ): JSONObject {
+        val content = JSONArray()
+        when (val raw = if (message.has("content")) message.get("content") else "") {
+            is JSONArray -> for (i in 0 until raw.length()) {
+                convertContentBlock(raw.optJSONObject(i))?.let { content.put(it) }
+            }
+            is String -> if (raw.isNotEmpty()) content.put(textBlock(raw))
+            else -> {}
+        }
+        appendAttachmentNotes(content, message.optJSONArray("attachments"))
+        return dshMessage(message.optString("id", "msg_$role"), role, content, sourceKind)
+    }
+
+    /** Native assistant message: Anthropic block names into DSH block names. */
+    private fun nativeAssistantMessageToDsh(message: JSONObject): JSONObject {
+        val content = JSONArray()
+        when (val raw = if (message.has("content")) message.get("content") else "") {
+            is JSONArray -> for (i in 0 until raw.length()) {
+                convertContentBlock(raw.optJSONObject(i))?.let { content.put(it) }
+            }
+            is String -> if (raw.isNotEmpty()) content.put(textBlock(raw))
+            else -> {}
+        }
+        return dshMessage(
+            message.optString("id", "assistant"), "assistant", content, "assistant"
+        )
+    }
+
+    /**
+     * Map one native content block onto its DSH counterpart. `thinking` and
+     * `tool_use` are the Anthropic spellings the native journal emits;
+     * toAssistantBlock (client.js:6887) only knows `reasoning` and `tool-call`.
+     */
+    private fun convertContentBlock(block: JSONObject?): JSONObject? {
+        if (block == null) return null
+        return when (block.optString("type")) {
+            "text" -> {
+                val text = block.optString("text", block.optString("value", ""))
+                if (text.isEmpty()) null else textBlock(text)
+            }
+            "thinking", "reasoning" -> {
+                val text = block.optString("text", block.optString("value", ""))
+                if (text.isEmpty()) null else {
+                    JSONObject().put("type", "reasoning").put("text", text)
+                }
+            }
+            "tool_use", "toolUse", "tool-call" -> {
+                val call = block.optJSONObject("value") ?: block
+                JSONObject().apply {
+                    put("type", "tool-call")
+                    put("id", call.optString("toolUseId", "").ifEmpty { call.optString("id", "call") })
+                    put("name", call.optString("name", call.optString("toolName", "tool")))
+                    put("arguments", call.optString("toolArgs", "").ifEmpty { rawArguments(call) })
+                }
+            }
+            else -> null
+        }
+    }
+
+    /** Native `tool/result` data `{ messageId, call, result }` into a DSH message. */
+    private fun nativeToolResultToDsh(data: JSONObject): JSONObject? {
+        val call = data.optJSONObject("call") ?: JSONObject()
+        val result = data.optJSONObject("result") ?: JSONObject()
+        val callId = call.optString("callId", "")
+            .ifEmpty { call.optString("toolUseId", "") }
+            .ifEmpty { call.optString("id", "") }
+        if (callId.isEmpty()) return null
+        val output = result.optString("output", result.optString("content", ""))
+        val block = JSONObject().apply {
+            put("type", "tool-result")
+            put("toolCallId", callId)
+            put("content", JSONArray().put(textBlock(output)))
+            put("isError", result.optBoolean("isError", !result.optBoolean("success", true)))
+        }
+        val messageId = data.optString("messageId", "tool").let { "${it}_$callId" }
+        return dshMessage(messageId, "user", JSONArray().put(block), "tool", callId)
+    }
+
+    /** historyEntrySchema (client.js:5341) — `{ event, view? }`. */
+    private fun historyEntry(event: JSONObject): JSONObject =
+        JSONObject().put("event", event)
+
+    /**
+     * sessionModelsValueSchema (client.js:5373) —
+     * `{ current: ModelSelection, routable, groups: ProviderGroup[], failures: [] }`.
+     *
+     * modelSelectionSchema requires provider and model to be non-empty
+     * (`string().min(1)`), so a session with no resolved model still has to
+     * report a placeholder rather than "".
+     */
     private suspend fun sessionModels(context: Context, payload: JSONObject): JSONObject {
         val raw = ChatDebugMethods.modelsList(context, JSONObject())
-        val entries = raw.optJSONArray("entries") ?: raw.optJSONArray("models") ?: JSONArray()
-        val groups = JSONArray()
-        val providerMap = mutableMapOf<String, JSONArray>()
+        val entries = raw.optJSONArray("entries") ?: JSONArray()
+
+        val byProvider = LinkedHashMap<String, JSONArray>()
+        val providerByEntryId = mutableMapOf<String, String>()
+        val entryIdByBaseModel = mutableMapOf<String, String>()
         for (i in 0 until entries.length()) {
-            val e = entries.getJSONObject(i)
-            val provider = e.optString("instanceName", e.optString("providerType", "default"))
-            val models = providerMap.getOrPut(provider) { JSONArray() }
-            models.put(JSONObject().apply {
-                put("id", e.optString("modelId", e.optString("entryId", "")))
-                put("name", e.optString("modelName", e.optString("modelId", "")))
-                val reasoning = e.optJSONObject("reasoning")
-                if (reasoning != null) put("reasoning", reasoning)
+            val e = entries.optJSONObject(i) ?: continue
+            val provider = e.optString("providerInstanceName", "")
+                .ifEmpty { e.optString("providerType", "") }
+                .ifEmpty { "OpenMinis" }
+            val id = e.optString("id", "").ifEmpty { e.optString("modelId", "") }
+            if (id.isEmpty()) continue
+            val modelName = e.optString("modelName", "").ifEmpty { id }
+            providerByEntryId[id] = provider
+            e.optString("modelId", "").takeIf { it.isNotEmpty() }?.let { entryIdByBaseModel[it] = id }
+            byProvider.getOrPut(provider) { JSONArray() }.put(JSONObject().apply {
+                put("id", id)
+                put("name", modelName)
             })
         }
-        for ((provider, models) in providerMap) {
-            groups.put(JSONObject().apply {
-                put("id", provider)
-                put("name", provider)
-                put("models", models)
-            })
+
+        val groups = JSONArray()
+        for ((provider, models) in byProvider) {
+            groups.put(JSONObject()
+                .put("id", provider)
+                .put("name", provider)
+                .put("models", models))
         }
+
+        var currentEntryId = ""
         val sid = payload.optString("sessionId")
-        var currentModel = ""
         if (sid.isNotEmpty()) {
             try {
-                val status = ChatMutationMethods.status(context, JSONObject().put("sessionId", sid))
-                currentModel = status.optString("modelName", "")
-            } catch (_: Exception) {}
+                val session = requireApp(context).chatRepository.getSession(sid)
+                val binding = session?.modelBinding?.let { runCatching { JSONObject(it) }.getOrNull() }
+                currentEntryId = binding?.takeIf { it.optString("type") == "entry" }
+                    ?.optString("entryId", "").orEmpty()
+                if (currentEntryId.isEmpty()) {
+                    currentEntryId = session?.modelId?.let(entryIdByBaseModel::get).orEmpty()
+                }
+            } catch (_: Exception) {
+            }
+        }
+        if (currentEntryId.isEmpty()) {
+            currentEntryId = byProvider.values.firstOrNull()?.optJSONObject(0)?.optString("id", "").orEmpty()
         }
         return JSONObject().apply {
-            put("current", JSONObject().apply {
-                put("provider", "openminis")
-                put("model", currentModel)
-            })
+            put("current", JSONObject()
+                .put("provider", providerByEntryId[currentEntryId]
+                    ?: byProvider.keys.firstOrNull()
+                    ?: "OpenMinis")
+                .put("model", currentEntryId.ifEmpty { "unconfigured" }))
             put("routable", true)
             put("groups", groups)
             put("failures", JSONArray())
         }
     }
 
+    /** sessionSelectModelValueSchema (client.js:5386) — `{ selected: ModelSelection }`. */
     private suspend fun sessionSelectModel(context: Context, payload: JSONObject): JSONObject {
         val sid = payload.optString("sessionId")
         val model = payload.optString("model")
         val provider = payload.optString("provider", "")
         val effort = payload.optString("reasoningEffort", "")
-        val body = JSONObject().put("sessionId", sid).put("entryId", model)
-        val result = ChatMutationMethods.selectModel(context, body)
+
+        val result = ChatMutationMethods.selectModel(
+            context, JSONObject().put("sessionId", sid).put("modelEntryId", model)
+        )
         if (effort.isNotEmpty()) {
-            val level = when (effort.lowercase()) {
-                "low" -> "low"
-                "medium" -> "medium"
-                "high" -> "high"
-                else -> effort.lowercase()
-            }
-            try {
-                ChatMutationMethods.selectThinkingLevel(
-                    context, JSONObject().put("sessionId", sid).put("level", level)
-                )
-            } catch (_: Exception) {}
+            ChatMutationMethods.selectThinkingLevel(
+                context,
+                JSONObject().put("sessionId", sid).put("thinkingLevel", effort.lowercase()),
+            )
         }
         return JSONObject().put("selected", JSONObject().apply {
-            put("provider", provider.ifEmpty { "openminis" })
-            put("model", result.optString("modelName", model))
+            put("provider", provider.ifEmpty { "OpenMinis" })
+            put("model", result.optString("modelEntryId", model).ifEmpty { model })
             if (effort.isNotEmpty()) put("reasoningEffort", effort)
         })
     }
 
+    /** sessionRenameValueSchema (client.js:5278) — `{ title: min 1, seq: int >= 0 }`. */
     private suspend fun sessionRename(context: Context, payload: JSONObject): JSONObject {
         val sid = payload.optString("sessionId")
         val title = payload.optString("title", "").trim().take(120)
-        if (sid.isEmpty() || title.isEmpty()) throw IllegalArgumentException("sessionId and title required")
+        if (sid.isEmpty() || title.isEmpty()) {
+            throw IllegalArgumentException("sessionId and title required")
+        }
         val app = context.applicationContext as com.openminis.app.MinisApp
-        app.chatRepository.updateSessionTitle(sid, title)
+        val repo = app.chatRepositoryOrNull
+            ?: throw IllegalStateException("chat subsystem is not ready")
+        repo.updateSessionTitle(sid, title)
         return JSONObject().put("title", title).put("seq", 0)
     }
 
+    /** sessionPromptValueSchema (client.js:5413) — `{ accepted: true, command? }`. */
     private suspend fun sessionPrompt(context: Context, payload: JSONObject): JSONObject {
         val sid = payload.optString("sessionId")
-        val contentParts = payload.optJSONArray("content") ?: JSONArray()
-        val textParts = mutableListOf<String>()
-        for (i in 0 until contentParts.length()) {
-            val part = contentParts.getJSONObject(i)
-            if (part.optString("type") == "text") {
-                textParts.add(part.optString("text", ""))
+        val parts = payload.optJSONArray("content") ?: JSONArray()
+        val text = StringBuilder()
+        val attachments = JSONArray()
+        for (i in 0 until parts.length()) {
+            val part = parts.optJSONObject(i) ?: continue
+            when (part.optString("type")) {
+                "text" -> {
+                    if (text.isNotEmpty()) text.append('\n')
+                    text.append(part.optString("text", ""))
+                }
+                "image" -> {
+                    val data = part.optString("data", "")
+                    val mime = part.optString("mediaType", "")
+                    if (data.isNotEmpty() && mime.startsWith("image/")) {
+                        val extension = when (mime) {
+                            "image/jpeg" -> "jpg"
+                            "image/webp" -> "webp"
+                            "image/gif" -> "gif"
+                            else -> "png"
+                        }
+                        attachments.put(JSONObject()
+                            .put("name", part.optString("name", "image-${i + 1}.$extension"))
+                            .put("mime", mime)
+                            .put("data", data))
+                    }
+                }
             }
         }
-        val text = textParts.joinToString("\n")
-        val body = JSONObject().apply {
-            put("prompt", text)
-            put("sessionId", sid)
-            put("wait", false)
+        if (text.isEmpty() && attachments.length() == 0) {
+            throw IllegalArgumentException("prompt content required")
         }
-        ChatMutationMethods.prompt(context, body)
+        val promptText = text.toString().ifEmpty { "[图片附件]" }
+        val request = JSONObject()
+            .put("prompt", promptText)
+            .put("sessionId", sid)
+            .put("wait", false)
+        if (attachments.length() > 0) request.put("attachments", attachments)
+        ChatMutationMethods.prompt(context, request)
         return JSONObject().put("accepted", true)
     }
 
+    /** sessionCancelValueSchema (client.js:5456) — `{ accepted: true }`. */
     private suspend fun sessionCancel(context: Context, payload: JSONObject): JSONObject {
-        val sid = payload.optString("sessionId")
-        ChatMutationMethods.cancel(context, JSONObject().put("sessionId", sid))
-        return JSONObject().put("cancelled", true)
+        ChatMutationMethods.cancel(
+            context, JSONObject().put("sessionId", payload.optString("sessionId"))
+        )
+        return JSONObject().put("accepted", true)
     }
 
+    /**
+     * sessionSearchValueSchema (client.js:5255) — snippet is capped at 240
+     * Unicode code points and the list at 20 rows by the schema itself.
+     */
     private suspend fun sessionSearch(context: Context, payload: JSONObject): JSONObject {
-        val query = payload.optString("query", "")
+        val query = payload.optString("query", "").trim()
+        if (query.isEmpty()) return JSONObject().put("items", JSONArray()).put("hasMore", false)
+
         val raw = ChatDebugMethods.sessionsList(
-            context, JSONObject().put("limit", 100).put("includeEmpty", false)
+            context, JSONObject().put("limit", 200).put("includeEmpty", false)
         )
         val sessions = raw.optJSONArray("sessions") ?: JSONArray()
+        val needle = query.lowercase()
         val items = JSONArray()
-        val lower = query.lowercase()
+        var matched = 0
         for (i in 0 until sessions.length()) {
-            val s = sessions.getJSONObject(i)
+            val s = sessions.optJSONObject(i) ?: continue
             val title = s.optString("title", "")
-            if (title.lowercase().contains(lower)) {
-                items.put(JSONObject().apply {
-                    put("sessionId", s.optString("id", s.optString("sessionId")))
-                    put("snippet", title.take(240))
-                })
+            val preview = s.optString("lastMessagePreview", "")
+            val hit = title.lowercase().contains(needle) || preview.lowercase().contains(needle)
+            if (!hit) continue
+            matched++
+            if (items.length() >= 20) continue
+            val snippet = if (title.lowercase().contains(needle)) title else preview
+            items.put(JSONObject()
+                .put("sessionId", s.optString("id"))
+                .put("snippet", takeCodePoints(snippet, 240)))
+        }
+        return JSONObject().put("items", items).put("hasMore", matched > items.length())
+    }
+
+    /** Truncate without splitting a UTF-16 surrogate pair. */
+    private fun takeCodePoints(value: String, limit: Int): String {
+        if (value.codePointCount(0, value.length) <= limit) return value
+        return value.substring(0, value.offsetByCodePoints(0, limit))
+    }
+
+    // ------------------------------------------------------------------- host
+
+    /**
+     * hostDescribeValueSchema (client.js:5704) —
+     * `{ version, cwd, provider?, model?, attachedSessions: int >= 0, canOpenPath }`.
+     *
+     * This is the first call the DSH shell makes (client.js:99); a shape mismatch
+     * here leaves the whole UI on a blank frame, so keep every required key.
+     */
+    private suspend fun hostDescribe(context: Context): JSONObject {
+        var attached = 0
+        try {
+            val raw = ChatDebugMethods.sessionsList(
+                context, JSONObject().put("limit", 500).put("includeEmpty", true)
+            )
+            attached = raw.optInt("count", raw.optJSONArray("sessions")?.length() ?: 0)
+        } catch (_: Exception) {
+        }
+        return JSONObject().apply {
+            put("version", hostVersion)
+            put("cwd", WORKSPACE_PATH)
+            put("attachedSessions", attached)
+            // Opening a path is an Android-side action the Web surface cannot drive.
+            put("canOpenPath", false)
+        }
+    }
+
+    /**
+     * hostListDirectoryValueSchema (client.js:5723) —
+     * `{ path, home, crumbs: DirectoryEntry[], entries: DirectoryEntry[], truncated }`
+     * where DirectoryEntry is `{ name, path, hidden }` (client.js:5716).
+     */
+    private suspend fun hostListDirectory(context: Context, payload: JSONObject): JSONObject {
+        val path = normalizedLinuxPath(payload.optString("path", "").ifEmpty { WORKSPACE_PATH })
+        if (path != WORKSPACE_PATH && !path.startsWith("$WORKSPACE_PATH/")) {
+            throw IllegalArgumentException("Minis Web 目录选择器仅开放 $WORKSPACE_PATH")
+        }
+        val entries = JSONArray()
+        var truncated = false
+        val sessionId = latestSessionId(context)
+        if (sessionId != null) {
+            val dir = resolveSessionPath(context, sessionId, path)
+            if (!dir.exists() || !dir.isDirectory) {
+                throw IllegalArgumentException("not a directory: $path")
+            }
+            val children = dir.listFiles()
+                ?.filter { it.isDirectory }
+                ?.sortedBy { it.name.lowercase() }
+                .orEmpty()
+            truncated = children.size > 500
+            children.take(500).forEach { child ->
+                entries.put(JSONObject()
+                    .put("name", child.name)
+                    .put("path", "${path.trimEnd('/')}/${child.name}")
+                    .put("hidden", child.name.startsWith(".")))
             }
         }
-        return JSONObject().put("items", items).put("hasMore", false)
-    }
-
-    private suspend fun sessionFork(context: Context, payload: JSONObject): JSONObject {
-        val newSid = HeadlessChatRunner.ensureSession(context, null)
-        return JSONObject().put("sessionId", newSid)
-    }
-
-    private fun hostDescribe(context: Context): JSONObject {
         return JSONObject().apply {
-            put("platform", "android")
-            put("version", "1.12-pet.11")
-            put("cwd", "/var/minis/workspace")
-            put("homeDir", "/var/minis")
-            put("hostname", android.os.Build.MODEL)
-            put("features", JSONObject().apply {
-                put("pickDirectory", false)
-                put("openPath", false)
-            })
+            put("path", path)
+            put("home", WORKSPACE_PATH)
+            put("crumbs", buildCrumbs(path))
+            put("entries", entries)
+            put("truncated", truncated)
         }
     }
 
-    private suspend fun hostListDirectory(context: Context, payload: JSONObject): JSONObject {
-        val path = payload.optString("path", "/var/minis/workspace")
-        val sid = payload.optString("sessionId", "")
+    private fun buildCrumbs(path: String): JSONArray {
+        val crumbs = JSONArray()
+        val rootSegments = WORKSPACE_PATH.trim('/').split('/')
+        val segments = path.trim('/').split('/').filter { it.isNotEmpty() }
+        var acc = WORKSPACE_PATH
+        crumbs.put(JSONObject()
+            .put("name", rootSegments.last())
+            .put("path", WORKSPACE_PATH)
+            .put("hidden", false))
+        for (segment in segments.drop(rootSegments.size)) {
+            acc = "$acc/$segment"
+            crumbs.put(JSONObject()
+                .put("name", segment)
+                .put("path", acc)
+                .put("hidden", segment.startsWith(".")))
+        }
+        return crumbs
+    }
+
+    private suspend fun hostCreateDirectory(context: Context, payload: JSONObject): JSONObject {
+        val parent = normalizedLinuxPath(payload.optString("path", WORKSPACE_PATH))
+        val name = payload.optString("name", "").trim()
+        if (name.isEmpty()) throw IllegalArgumentException("directory name required")
+        if (name == "." || name == ".." || name.contains('/') || name.contains('\\') || name.contains('\u0000')) {
+            throw IllegalArgumentException("invalid directory name")
+        }
+        val targetPath = "${parent.trimEnd('/')}/$name"
+        if (RemotePermissionPolicy.preset(context) == RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
+            targetPath != WORKSPACE_PATH && !targetPath.startsWith("$WORKSPACE_PATH/")) {
+            throw IllegalArgumentException("workspace-write preset: directories are limited to $WORKSPACE_PATH")
+        }
+        val sessionId = latestSessionId(context)
+            ?: throw IllegalArgumentException("create a session before creating a workspace directory")
+        val target = resolveSessionPath(context, sessionId, targetPath)
+        if (target.exists()) {
+            if (!target.isDirectory) throw IllegalArgumentException("a file already exists at $targetPath")
+        } else if (!target.mkdirs()) {
+            throw IllegalStateException("could not create directory")
+        }
+        return JSONObject().put("path", targetPath)
+    }
+
+    private suspend fun latestSessionId(context: Context): String? {
+        val result = ChatDebugMethods.sessionsList(
+            context, JSONObject().put("limit", 1).put("includeEmpty", true),
+        )
+        return result.optJSONArray("sessions")?.optJSONObject(0)?.optString("id", "")
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun normalizedLinuxPath(raw: String): String {
+        if (raw.contains('\\') || raw.contains('\u0000')) throw IllegalArgumentException("invalid path")
+        val path = if (raw.startsWith('/')) raw else "/$raw"
+        val parts = path.split('/').filter { it.isNotEmpty() }
+        if (parts.any { it == ".." }) throw IllegalArgumentException("'..' is not allowed")
+        return "/" + parts.filterNot { it == "." }.joinToString("/")
+    }
+
+    /** Resolve through the same PRoot mapping while enforcing the real host root. */
+    private fun resolveSessionPath(context: Context, sessionId: String, linuxPath: String): File {
+        val resolved = PRootKernel.resolveSessionHostPath(sessionId, linuxPath, context)
+            ?: throw IllegalArgumentException("cannot resolve path")
+        val expectedRoot = if (linuxPath.startsWith("/var/minis/")) {
+            val subdir = linuxPath.removePrefix("/var/minis/").substringBefore('/')
+            PRootKernel.resolveSessionHostPath(sessionId, "/var/minis/$subdir", context)
+                ?: throw IllegalArgumentException("cannot resolve path root")
+        } else {
+            com.openminis.app.sandbox.RootfsManager.getInstance(context).rootfsDir
+        }.canonicalFile
+        val canonical = resolved.canonicalFile
+        val prefix = expectedRoot.path.trimEnd(File.separatorChar) + File.separator
+        if (canonical.path != expectedRoot.path && !canonical.path.startsWith(prefix)) {
+            throw IllegalArgumentException("path escapes the Minis workspace")
+        }
+        return canonical
+    }
+
+    // -------------------------------------------------------------- workspaces
+
+    /**
+     * DSH workspaces map directly to the App's native conversation groups
+     * ([FolderEntity]). Ungrouped sessions remain in DSH's own ungrouped lane,
+     * so creating, renaming, dissolving or moving a session is immediately
+     * visible in both the Android session list and the browser sidebar.
+     */
+    private suspend fun workspaceList(context: Context): JSONObject {
+        val app = requireApp(context)
+        val folders = orderedFolders(context, app.chatRepository.listFolders())
+        val sessions = app.chatRepository.dao.listSessions()
         val items = JSONArray()
+        folders.forEach { folder -> items.put(workspaceView(folder, sessions)) }
+        return JSONObject()
+            .put("items", items)
+            .put("archivedSessionIds", JSONArray(archivedSessionIds(context).toList()))
+    }
+
+    private suspend fun workspaceCreate(context: Context, payload: JSONObject): JSONObject {
+        val path = normalizedLinuxPath(payload.optString("path", ""))
+        if (path == "/" || path == WORKSPACE_PATH) {
+            throw IllegalArgumentException("请选择一个命名的工作区")
+        }
+        val encodedName = path.substringAfterLast('/').trim()
+        val title = runCatching {
+            java.net.URLDecoder.decode(encodedName, Charsets.UTF_8.name())
+        }.getOrDefault(encodedName).trim().take(120)
+        if (title.isEmpty()) throw IllegalArgumentException("工作区名称不能为空")
+
+        val app = requireApp(context)
+        val existing = app.chatRepository.findFolderByName(title)
+        val folder = existing ?: app.chatRepository.createFolder(title)
+        rememberWorkspace(context, folder.id)
+        val sessions = app.chatRepository.dao.listSessions()
+        return JSONObject()
+            .put("workspace", workspaceView(folder, sessions))
+            .put("created", existing == null)
+    }
+
+    private suspend fun workspaceRename(context: Context, payload: JSONObject): JSONObject {
+        val id = requiredWorkspaceId(payload)
+        val title = payload.optString("title", "").trim().take(120)
+        if (title.isEmpty()) throw IllegalArgumentException("工作区名称不能为空")
+        val app = requireApp(context)
+        val folder = app.chatRepository.getFolder(id)
+            ?: throw IllegalArgumentException("workspace not found")
+        val conflict = app.chatRepository.findFolderByName(title)
+        if (conflict != null && conflict.id != id) {
+            throw IllegalArgumentException("已有同名工作区")
+        }
+        app.chatRepository.renameFolder(id, title, folder.description)
+        val updated = app.chatRepository.getFolder(id)
+            ?: throw IllegalStateException("workspace disappeared")
+        return JSONObject().put("workspace", workspaceView(updated, app.chatRepository.dao.listSessions()))
+    }
+
+    private suspend fun workspaceDelete(context: Context, payload: JSONObject): JSONObject {
+        val id = requiredWorkspaceId(payload)
+        val app = requireApp(context)
+        if (app.chatRepository.getFolder(id) == null) {
+            throw IllegalArgumentException("workspace not found")
+        }
+        app.chatRepository.dissolveFolder(id)
+        forgetWorkspace(context, id)
+        return JSONObject().put("deleted", true)
+    }
+
+    private suspend fun workspaceInsertBefore(context: Context, payload: JSONObject): JSONObject {
+        val id = requiredWorkspaceId(payload)
+        val app = requireApp(context)
+        val folders = app.chatRepository.listFolders()
+        if (folders.none { it.id == id }) throw IllegalArgumentException("workspace not found")
+        val order = reconciledWorkspaceOrder(context, folders.map { it.id }).toMutableList()
+        order.remove(id)
+        val before = payload.optString("beforeWorkspaceId", "")
+        val index = if (before.isEmpty()) order.size else order.indexOf(before).takeIf { it >= 0 }
+            ?: throw IllegalArgumentException("anchor workspace not found")
+        order.add(index, id)
+        saveWorkspaceOrder(context, order)
+        return JSONObject().put("workspaceIds", JSONArray(order))
+    }
+
+    private suspend fun workspaceInsertSessionBefore(context: Context, payload: JSONObject): JSONObject {
+        val workspaceId = requiredWorkspaceId(payload)
+        val sessionId = payload.optString("sessionId", "").ifEmpty {
+            throw IllegalArgumentException("sessionId required")
+        }
+        val app = requireApp(context)
+        val folder = app.chatRepository.getFolder(workspaceId)
+            ?: throw IllegalArgumentException("workspace not found")
+        if (app.chatRepository.getSession(sessionId) == null) {
+            throw IllegalArgumentException("session not found")
+        }
+        app.chatRepository.setFolderForSessions(workspaceId, listOf(sessionId))
+        // Android sorts group members by normal session order; moving the
+        // membership is durable even though it has no separate manual order.
+        return JSONObject().put("workspace", workspaceView(folder, app.chatRepository.dao.listSessions()))
+    }
+
+    private suspend fun workspaceArchiveSession(context: Context, payload: JSONObject): JSONObject {
+        val sessionId = payload.optString("sessionId", "").ifEmpty {
+            throw IllegalArgumentException("sessionId required")
+        }
+        val app = requireApp(context)
+        if (app.chatRepository.getSession(sessionId) == null) {
+            throw IllegalArgumentException("session not found")
+        }
+        val ids = archivedSessionIds(context).toMutableSet().apply { add(sessionId) }
+        context.getSharedPreferences("minis_dsh_workspace", Context.MODE_PRIVATE)
+            .edit().putStringSet("archived_sessions", ids).apply()
+        return JSONObject().put("archivedSessionIds", JSONArray(ids.toList()))
+    }
+
+    private fun workspaceView(
+        folder: com.openminis.app.data.db.FolderEntity,
+        sessions: List<com.openminis.app.data.db.ChatSessionEntity>,
+    ): JSONObject = JSONObject().apply {
+        put("workspaceId", folder.id)
+        put("path", "$WORKSPACE_PATH/groups/${folder.id}")
+        put("title", folder.name)
+        put("sessionIds", JSONArray(sessions.filter { it.folderId == folder.id }.map { it.id }))
+        put("createdAt", iso8601(folder.createdAt))
+        put("updatedAt", iso8601(folder.updatedAt))
+    }
+
+    private fun requireApp(context: Context): MinisApp =
+        context.applicationContext as? MinisApp
+            ?: throw IllegalStateException("MinisApp is not ready")
+
+    private fun requiredWorkspaceId(payload: JSONObject): String =
+        payload.optString("workspaceId", "").ifEmpty {
+            throw IllegalArgumentException("workspaceId required")
+        }
+
+    private fun archivedSessionIds(context: Context): Set<String> =
+        context.getSharedPreferences("minis_dsh_workspace", Context.MODE_PRIVATE)
+            .getStringSet("archived_sessions", emptySet())?.toSet().orEmpty()
+
+    private fun orderedFolders(
+        context: Context,
+        folders: List<com.openminis.app.data.db.FolderEntity>,
+    ): List<com.openminis.app.data.db.FolderEntity> {
+        val byId = folders.associateBy { it.id }
+        val order = reconciledWorkspaceOrder(context, folders.map { it.id })
+        return order.mapNotNull(byId::get)
+    }
+
+    private fun reconciledWorkspaceOrder(context: Context, current: List<String>): List<String> {
+        val saved = context.getSharedPreferences("minis_dsh_workspace", Context.MODE_PRIVATE)
+            .getString("workspace_order", null)
+            ?.let { runCatching { JSONArray(it) }.getOrNull() }
+            ?.let { arr -> (0 until arr.length()).map { arr.optString(it) } }
+            .orEmpty()
+        val known = current.toSet()
+        return saved.filter { it in known }.distinct() + current.filter { it !in saved }
+    }
+
+    private fun saveWorkspaceOrder(context: Context, order: List<String>) {
+        context.getSharedPreferences("minis_dsh_workspace", Context.MODE_PRIVATE)
+            .edit().putString("workspace_order", JSONArray(order).toString()).apply()
+    }
+
+    private suspend fun rememberWorkspace(context: Context, id: String) {
+        val folders = requireApp(context).chatRepository.listFolders()
+        val order = reconciledWorkspaceOrder(context, folders.map { it.id }).toMutableList()
+        if (id !in order) order.add(id)
+        saveWorkspaceOrder(context, order)
+    }
+
+    private fun forgetWorkspace(context: Context, id: String) {
+        val prefs = context.getSharedPreferences("minis_dsh_workspace", Context.MODE_PRIVATE)
+        val order = prefs.getString("workspace_order", null)
+            ?.let { runCatching { JSONArray(it) }.getOrNull() }
+            ?.let { arr -> (0 until arr.length()).map { arr.optString(it) } }
+            .orEmpty().filterNot { it == id }
+        prefs.edit().putString("workspace_order", JSONArray(order).toString()).apply()
+    }
+
+    private fun iso8601(epochMs: Long): String {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+        fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        return fmt.format(java.util.Date(epochMs))
+    }
+
+    // ------------------------------------------------------------------ skills
+
+    /**
+     * skillListValueSchema (client.js:5754) — `{ skills: SkillEntry[] }` where
+     * SkillEntry is `{ name: min 1, description, whenToUse?, modelInvocable }`
+     * (client.js:5746). Note the key is `skills`, not `items`.
+     */
+    private suspend fun skillList(context: Context): JSONObject {
+        val skills = JSONArray()
         try {
             val rpc = DebugRPCHandler(context)
             val req = JSONObject().apply {
                 put("jsonrpc", "2.0"); put("id", 1)
-                put("method", "storage.files.list")
-                put("params", JSONObject().put("path", path).apply {
-                    if (sid.isNotEmpty()) put("sessionId", sid)
+                put("method", "skills.list"); put("params", JSONObject())
+            }
+            val result = JSONObject(rpc.handle(req.toString())).optJSONObject("result") ?: JSONObject()
+            val raw = result.optJSONArray("skills") ?: JSONArray()
+            for (i in 0 until raw.length()) {
+                val s = raw.optJSONObject(i) ?: continue
+                val name = s.optString("name", "").ifEmpty { s.optString("id", "") }
+                if (name.isEmpty()) continue
+                skills.put(JSONObject().apply {
+                    put("name", name)
+                    put("description", s.optString("description", ""))
+                    put("modelInvocable", s.optBoolean("enabled", true))
                 })
             }
-            val raw = JSONObject(rpc.handle(req.toString()))
-            val result = raw.optJSONObject("result") ?: JSONObject()
-            val files = result.optJSONArray("items") ?: JSONArray()
-            for (i in 0 until files.length()) {
-                val f = files.getJSONObject(i)
-                items.put(JSONObject().apply {
-                    put("name", f.optString("name"))
-                    put("isDirectory", f.optBoolean("isDirectory", false))
-                    if (!f.optBoolean("isDirectory", false)) {
-                        put("size", f.optLong("size", 0))
-                    }
-                })
-            }
-        } catch (_: Exception) {}
-        return JSONObject().apply {
-            put("path", path)
-            put("items", items)
+        } catch (_: Exception) {
         }
+        return JSONObject().put("skills", skills)
     }
 
-    private suspend fun workspaceList(context: Context): JSONObject {
-        val items = JSONArray()
-        items.put(JSONObject().apply {
+    // ----------------------------------------------------------- agent presets
+
+    /**
+     * agentPresetListValueSchema (client.js:5772) —
+     * `{ presets: AgentPresetEntry[], authorable, hasDocument }` where an entry
+     * is `{ id: min 1, trust: "system"|"user", isDefault, name?, description? }`.
+     */
+    private fun agentPresetList(): JSONObject = JSONObject().apply {
+        put("presets", JSONArray().put(JSONObject().apply {
             put("id", "default")
-            put("name", "OpenMinis 工作区")
-            put("path", "/var/minis/workspace")
-            put("sessions", JSONArray())
-        })
-        return JSONObject().put("items", items)
-    }
-
-    private suspend fun workspaceCreate(context: Context, payload: JSONObject): JSONObject {
-        val name = payload.optString("name", "新工作区")
-        return JSONObject().apply {
-            put("id", "ws_${System.currentTimeMillis()}")
-            put("name", name)
-        }
-    }
-
-    private suspend fun skillList(context: Context): JSONObject {
-        val rpc = DebugRPCHandler(context)
-        val req = JSONObject().apply {
-            put("jsonrpc", "2.0"); put("id", 1)
-            put("method", "skills.list"); put("params", JSONObject())
-        }
-        val raw = JSONObject(rpc.handle(req.toString()))
-        val result = raw.optJSONObject("result") ?: JSONObject()
-        val skills = result.optJSONArray("skills") ?: JSONArray()
-        val items = JSONArray()
-        for (i in 0 until skills.length()) {
-            val s = skills.getJSONObject(i)
-            items.put(JSONObject().apply {
-                put("id", s.optString("id"))
-                put("name", s.optString("name"))
-                put("description", s.optString("description", ""))
-                put("enabled", s.optBoolean("enabled", true))
-            })
-        }
-        return JSONObject().put("items", items)
-    }
-
-    private fun agentPresetList(context: Context): JSONObject {
-        return JSONObject().put("items", JSONArray().put(JSONObject().apply {
-            put("id", "default")
+            put("trust", "system")
+            put("isDefault", true)
             put("name", "OpenMinis Agent")
             put("description", "默认 Agent 配置")
-            put("builtin", true)
         }))
+        // Preset authoring writes into app storage — Android-side only.
+        put("authorable", false)
+        put("hasDocument", false)
     }
 
-    private suspend fun goalCreate(context: Context, payload: JSONObject): JSONObject {
-        val sid = payload.optString("sessionId")
-        val title = payload.optString("title", "")
-        val rpc = DebugRPCHandler(context)
-        val req = JSONObject().apply {
-            put("jsonrpc", "2.0"); put("id", 1)
-            put("method", "agent.goal.set")
-            put("params", JSONObject().put("sessionId", sid).put("title", title))
+    /** agentPresetReadValueSchema (client.js:5785). */
+    private fun agentPresetRead(payload: JSONObject): JSONObject = JSONObject().apply {
+        put("agentPreset", payload.optString("agentPreset", "default"))
+        put("trust", "system")
+        put("content", "")
+        put("name", "OpenMinis Agent")
+    }
+
+    // ------------------------------------------------------------------- goals
+
+    /** DSH goal APIs backed by the same AgentStateStore used by native UI/RPC. */
+    private fun goalCreate(context: Context, payload: JSONObject): JSONObject {
+        val sessionId = requiredGoalSession(payload)
+        val objective = payload.optString("objective", "").trim()
+        if (objective.isEmpty()) throw IllegalArgumentException("goal objective required")
+        val rounds = payload.optInt("maxGoalRounds", 8).coerceIn(1, 100)
+        val goal = com.openminis.app.tools.AgentStateStore.goalSet(sessionId, objective, rounds)
+        appendGoalChange(sessionId, "create", goal)
+        return goalRef(goal)
+    }
+
+    private fun goalEdit(context: Context, payload: JSONObject): JSONObject {
+        val sessionId = requiredGoalSession(payload)
+        val current = requireCurrentGoal(sessionId, payload)
+        val objective = if (payload.has("objective")) {
+            payload.optString("objective", "").trim().ifEmpty {
+                throw IllegalArgumentException("goal objective cannot be empty")
+            }
+        } else current.text
+        val rounds = if (payload.has("maxGoalRounds")) {
+            payload.optInt("maxGoalRounds", current.maxGoalRounds).coerceIn(1, 100)
+        } else current.maxGoalRounds
+        val goal = com.openminis.app.tools.AgentStateStore.goalSet(sessionId, objective, rounds)
+        appendGoalChange(sessionId, "edit", goal)
+        return goalRef(goal)
+    }
+
+    private fun goalSetPhase(payload: JSONObject, operation: String): JSONObject {
+        val sessionId = requiredGoalSession(payload)
+        requireCurrentGoal(sessionId, payload)
+        val goal = when (operation) {
+            "pause" -> com.openminis.app.tools.AgentStateStore.goalSetActive(sessionId, false)
+            "resume" -> com.openminis.app.tools.AgentStateStore.goalSetActive(sessionId, true)
+            "complete" -> com.openminis.app.tools.AgentStateStore.goalComplete(sessionId)
+            else -> throw IllegalArgumentException("unknown goal operation")
         }
-        rpc.handle(req.toString())
-        return JSONObject().put("created", true)
+        appendGoalChange(sessionId, operation, goal)
+        return goalRef(goal)
     }
 
-    private suspend fun goalEdit(context: Context, payload: JSONObject): JSONObject {
-        return goalCreate(context, payload)
-    }
-
-    private suspend fun goalClear(context: Context, payload: JSONObject): JSONObject {
-        val sid = payload.optString("sessionId")
-        val rpc = DebugRPCHandler(context)
-        val req = JSONObject().apply {
-            put("jsonrpc", "2.0"); put("id", 1)
-            put("method", "agent.goal.set")
-            put("params", JSONObject().put("sessionId", sid).put("title", ""))
-        }
-        rpc.handle(req.toString())
+    /** goalClearValueSchema (client.js:5860) — `{ cleared: true }`. */
+    private fun goalClear(context: Context, payload: JSONObject): JSONObject {
+        val sessionId = requiredGoalSession(payload)
+        val current = requireCurrentGoal(sessionId, payload)
+        com.openminis.app.tools.AgentStateStore.goalClear(sessionId)
+        SessionEventHub.append(sessionId, "goal/change", JSONObject().apply {
+            put("kind", "goal/change")
+            put("version", 1)
+            put("operation", "clear")
+            put("cleared", JSONObject().put("id", current.id).put("revision", current.revision + 1))
+            put("clearedAt", System.currentTimeMillis())
+        })
         return JSONObject().put("cleared", true)
     }
 
-    private fun settingsDescribe(context: Context): JSONObject {
-        return JSONObject().apply {
-            put("settings", JSONObject().apply {
-                put("theme", "system")
-                put("language", "zh-CN")
+    private fun requiredGoalSession(payload: JSONObject): String =
+        payload.optString("sessionId", "").ifEmpty {
+            throw IllegalArgumentException("sessionId required")
+        }
+
+    private fun requireCurrentGoal(
+        sessionId: String,
+        payload: JSONObject,
+    ): com.openminis.app.tools.AgentStateStore.Goal {
+        val goal = com.openminis.app.tools.AgentStateStore.goalGet(sessionId)
+        if (goal.text.isBlank() || goal.id.isBlank()) throw IllegalArgumentException("goal not found")
+        payload.optJSONObject("ref")?.let { ref ->
+            if (ref.optString("id", "") != goal.id || ref.optInt("revision", 0) != goal.revision) {
+                throw IllegalArgumentException("goal was changed; refresh and retry")
+            }
+        }
+        return goal
+    }
+
+    private fun goalRef(goal: com.openminis.app.tools.AgentStateStore.Goal): JSONObject =
+        JSONObject().put("ref", JSONObject()
+            .put("id", goal.id)
+            .put("revision", goal.revision.coerceAtLeast(1)))
+
+    private fun appendGoalChange(
+        sessionId: String,
+        operation: String,
+        goal: com.openminis.app.tools.AgentStateStore.Goal,
+    ) {
+        SessionEventHub.append(sessionId, "goal/change", JSONObject().apply {
+            put("kind", "goal/change")
+            put("version", 1)
+            put("operation", operation)
+            put("goal", JSONObject().apply {
+                put("id", goal.id)
+                put("revision", goal.revision)
+                put("objective", goal.text)
+                put("phase", goal.phase)
+                put("maxGoalRounds", goal.maxGoalRounds)
             })
-            put("schema", JSONObject())
+            put("roundsStarted", 0)
+            put("createdAt", goal.createdAt)
+            put("updatedAt", goal.updatedAt)
+        })
+    }
+
+    // ---------------------------------------------------------------- settings
+
+    /**
+     * DSH theme, language and permission namespaces are projections over the
+     * App's real SharedPreferences/repositories. Both surfaces therefore edit
+     * one source of truth rather than maintaining browser-only duplicates.
+     */
+    private fun settingsDescribe(context: Context): JSONObject = JSONObject().apply {
+        put("writable", true)
+        put("hasDocument", false)
+        put("namespaces", JSONArray().apply {
+            put(settingsNamespace(context, "ui-theme"))
+            put(settingsNamespace(context, "locale"))
+            put(settingsNamespace(context, "permission"))
+            put(settingsNamespace(context, "agent-presets"))
+            put(settingsNamespace(context, "general"))
+        })
+    }
+
+    private fun settingsNamespace(context: Context, ns: String): JSONObject {
+        val (schema, value, base) = when (ns) {
+            "ui-theme" -> {
+                val mode = com.openminis.app.ui.settings.getAppearancePrefs(context)
+                    .getInt(com.openminis.app.ui.settings.KEY_THEME_MODE, 0)
+                val preference = when (mode) { 1 -> "light"; 2 -> "dark"; else -> "system" }
+                Triple(themeSettingsSchema(), JSONObject().put("preference", preference), JSONObject().put("preference", "system"))
+            }
+            "locale" -> {
+                val code = com.openminis.app.ui.settings.getAppearancePrefs(context)
+                    .getString(com.openminis.app.ui.settings.KEY_LANGUAGE, "").orEmpty()
+                val value = JSONObject().apply { if (code == "zh" || code == "en") put("preference", code) }
+                Triple(localeSettingsSchema(), value, JSONObject())
+            }
+            "permission" -> {
+                val preset = RemotePermissionPolicy.preset(context)
+                Triple(
+                    permissionSettingsSchema(),
+                    JSONObject().put("defaultPreset", preset),
+                    JSONObject().put("defaultPreset", RemotePermissionPolicy.PRESET_WORKSPACE_WRITE),
+                )
+            }
+            "agent-presets" -> Triple(
+                singleStringSchema("default"),
+                JSONObject().put("default", "default"),
+                JSONObject().put("default", "default"),
+            )
+            "general" -> Triple(
+                generalSettingsSchema(),
+                JSONObject().apply {
+                    put("host", "OpenMinis Pet (Android)")
+                    put("version", hostVersion)
+                    put("device", android.os.Build.MODEL)
+                    put("workspace", WORKSPACE_PATH)
+                },
+                JSONObject(),
+            )
+            else -> throw IllegalArgumentException("unknown settings namespace: $ns")
+        }
+        return JSONObject().apply {
+            put("ns", ns)
+            put("schema", schema)
+            put("value", value)
+            put("base", base)
+            put("user", JSONObject(value.toString()))
+            put("applies", "live")
+            put("secrets", JSONArray())
+            put("revision", settingsRevision(value))
         }
     }
 
+    private fun settingsWrite(context: Context, payload: JSONObject, mode: String): JSONObject {
+        val ns = payload.optString("ns", "").ifEmpty {
+            throw IllegalArgumentException("settings namespace required")
+        }
+        val currentView = settingsNamespace(context, ns)
+        val current = currentView.getJSONObject("value")
+        if (payload.has("expectedRevision") &&
+            payload.optInt("expectedRevision", -1) != currentView.getInt("revision")
+        ) {
+            throw IllegalArgumentException("settings changed on Android; refresh and retry")
+        }
+        val next = JSONObject(current.toString())
+        when (mode) {
+            "update" -> mergeJsonObject(next, payload.optJSONObject("patch") ?: JSONObject())
+            "replace" -> {
+                val replacement = payload.optJSONObject("section") ?: JSONObject()
+                next.keys().asSequence().toList().forEach(next::remove)
+                mergeJsonObject(next, replacement)
+            }
+            "mutate" -> {
+                val ops = payload.optJSONArray("ops") ?: JSONArray()
+                for (i in 0 until ops.length()) {
+                    val op = ops.optJSONObject(i) ?: continue
+                    val path = op.optJSONArray("path") ?: JSONArray()
+                    if (path.length() != 1) throw IllegalArgumentException("only top-level setting fields are supported")
+                    val field = path.optString(0, "")
+                    if (field.isEmpty()) throw IllegalArgumentException("setting field required")
+                    when (op.optString("op")) {
+                        "set" -> next.put(field, op.opt("value"))
+                        "unset" -> next.remove(field)
+                        else -> throw IllegalArgumentException("unknown settings mutation")
+                    }
+                }
+            }
+        }
+
+        when (ns) {
+            "ui-theme" -> {
+                val preference = next.optString("preference", "system")
+                val modeValue = when (preference) {
+                    "system" -> 0; "light" -> 1; "dark" -> 2
+                    else -> throw IllegalArgumentException("invalid theme preference")
+                }
+                com.openminis.app.ui.settings.getAppearancePrefs(context).edit()
+                    .putInt(com.openminis.app.ui.settings.KEY_THEME_MODE, modeValue).apply()
+            }
+            "locale" -> {
+                val preference = next.optString("preference", "")
+                if (preference.isNotEmpty() && preference != "zh" && preference != "en") {
+                    throw IllegalArgumentException("invalid locale preference")
+                }
+                applyAppLocale(context, preference)
+            }
+            "permission" -> {
+                val preset = next.optString("defaultPreset", "")
+                if (preset != RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
+                    preset != RemotePermissionPolicy.PRESET_DANGER_FULL
+                ) throw IllegalArgumentException("invalid permission preset")
+                RemotePermissionPolicy.setPreset(context, preset)
+            }
+            "agent-presets" -> if (next.optString("default", "default") != "default") {
+                throw IllegalArgumentException("OpenMinis currently provides only the default Agent preset")
+            }
+            "general" -> throw IllegalArgumentException("general host metadata is read-only")
+            else -> throw IllegalArgumentException("unknown settings namespace: $ns")
+        }
+        return settingsNamespace(context, ns)
+    }
+
+    private fun mergeJsonObject(target: JSONObject, patch: JSONObject) {
+        for (key in patch.keys()) target.put(key, patch.opt(key))
+    }
+
+    private fun applyAppLocale(context: Context, preference: String) {
+        com.openminis.app.ui.settings.getAppearancePrefs(context).edit()
+            .putString(com.openminis.app.ui.settings.KEY_LANGUAGE, preference).apply()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val manager = context.getSystemService(android.app.LocaleManager::class.java)
+            manager?.applicationLocales = if (preference.isEmpty()) {
+                android.os.LocaleList.getEmptyLocaleList()
+            } else {
+                android.os.LocaleList.forLanguageTags(preference)
+            }
+        }
+    }
+
+    private fun settingsRevision(value: JSONObject): Int = value.toString().hashCode() and Int.MAX_VALUE
+
+    /** Schemastery JSON envelopes consumed by dsh-client-schema-form. */
+    private fun themeSettingsSchema(): JSONObject = JSONObject().apply {
+        put("uid", 5)
+        put("refs", JSONObject().apply {
+            put("1", JSONObject().put("type", "const").put("value", "light"))
+            put("2", JSONObject().put("type", "const").put("value", "dark"))
+            put("3", JSONObject().put("type", "const").put("value", "system"))
+            put("4", JSONObject().put("type", "union").put("list", JSONArray(listOf(1, 2, 3))))
+            put("5", JSONObject().put("type", "object").put("dict", JSONObject().put("preference", 4)))
+        })
+    }
+
+    private fun localeSettingsSchema(): JSONObject = JSONObject().apply {
+        put("uid", 4)
+        put("refs", JSONObject().apply {
+            put("1", JSONObject().put("type", "const").put("value", "zh"))
+            put("2", JSONObject().put("type", "const").put("value", "en"))
+            put("3", JSONObject().put("type", "union").put("list", JSONArray(listOf(1, 2))))
+            put("4", JSONObject().put("type", "object").put("dict", JSONObject().put("preference", 3)))
+        })
+    }
+
+    private fun permissionSettingsSchema(): JSONObject = JSONObject().apply {
+        put("uid", 4)
+        put("refs", JSONObject().apply {
+            put("1", JSONObject().put("type", "const")
+                .put("meta", JSONObject().put("description", "工作区写入"))
+                .put("value", RemotePermissionPolicy.PRESET_WORKSPACE_WRITE))
+            put("2", JSONObject().put("type", "const")
+                .put("meta", JSONObject().put("description", "完整沙箱访问（高风险）"))
+                .put("value", RemotePermissionPolicy.PRESET_DANGER_FULL))
+            put("3", JSONObject().put("type", "union").put("list", JSONArray(listOf(1, 2))))
+            put("4", JSONObject().put("type", "object").put("dict", JSONObject().put("defaultPreset", 3)))
+        })
+    }
+
+    private fun singleStringSchema(field: String): JSONObject = JSONObject().apply {
+        put("uid", 2)
+        put("refs", JSONObject().apply {
+            put("1", JSONObject().put("type", "string"))
+            put("2", JSONObject().put("type", "object").put("dict", JSONObject().put(field, 1)))
+        })
+    }
+
+    private fun generalSettingsSchema(): JSONObject = JSONObject().apply {
+        put("uid", 2)
+        put("refs", JSONObject().apply {
+            put("1", JSONObject().put("type", "string"))
+            put("2", JSONObject().put("type", "object").put("dict", JSONObject().apply {
+                put("host", 1); put("version", 1); put("device", 1); put("workspace", 1)
+            }))
+        })
+    }
+
+    // ------------------------------------------------------------- credentials
+
+    /**
+     * credentialsDescribeValueSchema (client.js:5941) —
+     * `{ credentials: Record<string, { configured, source?, writable }> }`.
+     * Note this is a RECORD keyed by ref name, not an array.
+     *
+     * Security: only presence metadata crosses this boundary. Provider API keys
+     * are never read here, and `writable` is false so the UI does not offer an
+     * edit affordance the Web surface must refuse anyway.
+     */
     private fun credentialsDescribe(context: Context): JSONObject {
-        return JSONObject().apply {
-            put("credentials", JSONArray())
+        val credentials = JSONObject()
+        try {
+            val app = context.applicationContext as com.openminis.app.MinisApp
+            val cfg = app.providerRepositoryOrNull?.config?.value
+            for (instance in cfg?.instances.orEmpty()) {
+                val ref = credentialRef(instance.providerType.name)
+                if (credentials.has(ref)) continue
+                credentials.put(ref, JSONObject()
+                    .put("configured", true)
+                    .put("source", "android-keystore")
+                    .put("writable", false))
+            }
+        } catch (_: Exception) {
         }
+        return JSONObject().put("credentials", credentials)
     }
 
+    /** credentialRefNameSchema (client.js:5932) — `^[A-Za-z_][A-Za-z0-9_]*$`. */
+    private fun credentialRef(providerType: String): String {
+        val sanitized = providerType.uppercase().map { if (it.isLetterOrDigit()) it else '_' }
+            .joinToString("")
+        val head = if (sanitized.firstOrNull()?.isDigit() != false) "_$sanitized" else sanitized
+        return "${head}_API_KEY"
+    }
+
+    // --------------------------------------------------------------------- llm
+
+    /**
+     * llmProvidersValueSchema (client.js:5968) — `{ providers: [...] }` where a
+     * row is `{ provider: min 1, displayName: min 1, settingsNs, settingsPath: [],
+     * active, declared? }` (client.js:5958).
+     */
     private fun llmProviders(context: Context): JSONObject {
-        return JSONObject().put("providers", JSONArray().put(JSONObject().apply {
-            put("id", "openminis")
-            put("name", "OpenMinis")
-            put("configured", true)
-        }))
-    }
-
-    private suspend fun llmModels(context: Context): JSONObject {
-        val raw = ChatDebugMethods.modelsList(context, JSONObject())
-        val entries = raw.optJSONArray("entries") ?: raw.optJSONArray("models") ?: JSONArray()
-        val models = JSONArray()
-        for (i in 0 until entries.length()) {
-            val e = entries.getJSONObject(i)
-            models.put(JSONObject().apply {
-                put("id", e.optString("modelId", e.optString("entryId", "")))
-                put("name", e.optString("modelName", ""))
-                put("provider", e.optString("instanceName", "openminis"))
-            })
-        }
-        return JSONObject().put("models", models)
-    }
-
-    private fun wrapOk(rpcId: String, value: JSONObject): JSONObject {
-        return JSONObject().apply {
-            put("type", "server-response")
-            put("rpcId", rpcId)
-            put("result", JSONObject().apply {
-                put("ok", true)
-                put("value", value)
-            })
-        }
-    }
-
-    private fun wrapError(rpcId: String, message: String): JSONObject {
-        return JSONObject().apply {
-            put("type", "server-response")
-            put("rpcId", rpcId)
-            put("result", JSONObject().apply {
-                put("ok", false)
-                put("error", JSONObject().apply {
-                    put("code", "internal")
-                    put("message", message)
-                    put("details", JSONObject())
+        val providers = JSONArray()
+        try {
+            val app = context.applicationContext as com.openminis.app.MinisApp
+            val cfg = app.providerRepositoryOrNull?.config?.value
+            for (instance in cfg?.instances.orEmpty()) {
+                providers.put(JSONObject().apply {
+                    put("provider", instance.id)
+                    put("displayName", instance.label.ifEmpty { instance.providerType.name })
+                    put("settingsNs", "general")
+                    put("settingsPath", JSONArray())
+                    put("active", instance.isEnabled)
+                    put("declared", true)
                 })
-            })
+            }
+        } catch (_: Exception) {
         }
+        if (providers.length() == 0) {
+            providers.put(JSONObject()
+                .put("provider", "openminis")
+                .put("displayName", "OpenMinis")
+                .put("settingsNs", "general")
+                .put("settingsPath", JSONArray())
+                .put("active", true))
+        }
+        return JSONObject().put("providers", providers)
+    }
+
+    /**
+     * llmModelsValueSchema (client.js:5971) — `{ groups, failures }`, the same
+     * provider-group shape session.models uses.
+     */
+    private suspend fun llmModels(context: Context): JSONObject {
+        val models = sessionModels(context, JSONObject())
+        return JSONObject()
+            .put("groups", models.optJSONArray("groups") ?: JSONArray())
+            .put("failures", JSONArray())
+    }
+
+    // ---------------------------------------------------------------- envelope
+
+    private fun wrapOk(rpcId: String, value: JSONObject): JSONObject = JSONObject().apply {
+        put("type", "server-response")
+        put("rpcId", rpcId)
+        put("result", JSONObject().put("ok", true).put("value", value))
+    }
+
+    /**
+     * rpcErrorSchema (client.js:4897) is a discriminated union over `code`, and
+     * there is no generic "internal" member — an unknown code fails the client's
+     * own parse, turning a handled backend error into an unhandled client throw.
+     * `bad-request` is the one branch whose details (`{ issues: [] }`) accept an
+     * arbitrary payload, so it is the safe carrier for any host-side failure.
+     */
+    private fun wrapError(rpcId: String, message: String): JSONObject = JSONObject().apply {
+        put("type", "server-response")
+        put("rpcId", rpcId)
+        put("result", JSONObject().apply {
+            put("ok", false)
+            put("error", JSONObject().apply {
+                put("code", "bad-request")
+                put("message", message)
+                put("details", JSONObject().put("issues", JSONArray()))
+            })
+        })
     }
 
     private val METHODS = setOf(

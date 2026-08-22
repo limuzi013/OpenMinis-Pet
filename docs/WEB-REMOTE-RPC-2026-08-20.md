@@ -1,6 +1,6 @@
 # Web Remote：RPC 与会话事件协议
 
-> 更新：2026-08-21
+> 更新：2026-08-22
 > 状态：实现契约。本文描述当前 Web Remote 的状态边界；它不是 APK 发布或后台任务完成度的证明。
 
 ## 1. 设计边界
@@ -14,26 +14,28 @@ Web Remote 是 Android 聊天会话的一个已认证远程投影，不是第二
 
 ## 2. 浏览器资源
 
-工作台由 APK assets 中的 `index.html`、`app.css` 和 `app.js` 实现，配合本地打包的 Markdown 与净化依赖。会话框架、控制中心和 Workspace 都由 `app.js` 协调；不依赖从 Harness 打包而来的 React/Cordis 组件，也不依赖旧的分栏/标签脚本。
+默认工作台位于 APK 的 `assets/minis/`。会话 UI 是基于 MIT 上游静态产物进行 source-adapted 的 React/Cordis bundle，`minis-control.js/css` 以独立覆盖层提供 App 管理功能；旧 `assets/remote/` 不再是默认前端。用户可见品牌为 Minis，内部 `@deepseek-ai/dsh-*` 模块 ID 和协议名为加载兼容所必需并继续保留。
 
-布局遵循 source-adapted Harness RC8 的阅读优先原则：会话 rail 可收起，聊天是默认主区，Details、活动、控制中心和 Workspace 按需显示。该设计参照并不意味着 wire protocol 或客户端 bundle 与 Harness 相同。
+浏览器不是第二个 Agent runtime：bundle 的 unary/wire 请求由 `DshApiAdapter` 翻译到 Android 的同一批 Repository、`ChatViewModel`、`SessionEventHub` 和 AlarmManager。
 
 ## 3. 会话事件 WebSocket
 
 ### 3.1 建连
 
 ```text
-GET /api/events/session?sessionId=<id>[&afterSeq=<non-negative-int>][&snapshot=1][&includeReasoning=true]
+GET /api/events.mux                 # Minis 会话事件（默认全局 fan-out）
+GET /api/events.host                # 审批、用户问题等 host 请求
+GET /api/events/session?sessionId=<id>[&afterSeq=<seq>]  # 旧的单会话兼容端点
 Upgrade: websocket
 ```
 
-连接须通过 Remote 登录认证。使用 cookie 的浏览器升级还须通过同源检查，避免跨站 WebSocket 劫持。普通 HTTP 请求此路径会得到 `426 websocket upgrade required`。
+连接须通过 Remote 登录认证。使用 cookie 的浏览器升级还须通过严格同源检查；请求 Host 还要通过本机地址、已配置域名或可信本机 Cloudflare connector 校验。普通 HTTP 请求这些路径会得到 `426 websocket upgrade required`。
 
-- 没有 `afterSeq`（或显式 `snapshot=1`）时，服务端先发送一致的快照，再订阅新事件。
-- 带 `afterSeq` 重连时，服务端回放严格晚于该序号的保留事件。
-- `includeReasoning=true` 允许快照包含可用的 reasoning 投影；默认不为每次读取扩大传输。
+Minis 客户端用 `session.history` 获取尾页及投影水位，再按事件 `seq` 追加 mux 帧。历史和实时帧共享 Android journal 的同一序号空间；旧安装中尚无 journal 的会话会一次性回填最近的有界消息尾部。
 
 ### 3.2 Wire frames
+
+`/api/events/session` 兼容端点直接发送下表帧；`events.mux`/`events.host` 会再包一层 `{type:"server-request", method, payload}`，其中 payload 承载对应 mux/host 帧。
 
 | `type` | 必要字段 | 含义 |
 |---|---|---|
@@ -89,13 +91,12 @@ Remote 优先使用与 Harness 相同的核心命名：
 | 会话控制 | `POST /api/prompt`, `/api/cancel`, `/api/compact`, `/api/session/new`, `/api/session/title`, `/api/session/delete` | 用户请求的会话命令。 |
 | 共享 model / thinking | `POST /api/session/model`, `POST /api/session/thinking` | 直接更新目标 session 的共享 `ChatViewModel` 绑定。 |
 | 模型与统计 | `GET /api/models`, `GET /api/usage` | 读取可用模型和用量。 |
-| Workspace | `/api/files`, `/api/file`, `/api/edit`, `/api/shell` | 文件浏览、编辑和 shell；写入受 session 路径与远程权限预设约束。 |
+| DSH Workspace | `workspace.*`, `host.listDirectory`, `host.createDirectory` | 映射原生会话分组和限定的虚拟工作区目录；不开放任意文件读写或 Shell。 |
+| Minis unary RPC | `POST /api/{method}` | 严格 schema 的会话、模型、Goal、设置和 Workspace 兼容适配。 |
 | 管理 RPC | `POST /api/rpc` | 经过明确 allowlist 的 native Debug RPC 适配，不是通用 Debug RPC 代理。 |
+| URL 导入 | `skills.importUrl`, `mcp.importUrl` | 公开 HTTPS/443、逐次重定向与地址校验、限制下载大小；拒绝本机与私网目标。 |
 
-控制中心当前使用的写能力包括：`provider.instances.*`、`provider.models.*`、
-`skills.create/update/toggle/delete`、`mcp.create/update/import/toggle/delete`、
-`environments.create/update/delete` 与 `storage.mounts.rename/setWritable/remove`。Provider API Key
-和环境变量值都是只写字段：读取接口只返回 `hasCredential` / `hasValue`，不会导出秘密。
+控制台作为 DSH 设置页的一个 section，当前映射 Provider/模型/模型组、Skills、MCP、记忆与 SOUL、环境变量、共享目录与挂载、完整定时任务 CRUD/立即运行/历史、Agent 设置与作业、Web 服务/Tunnel 设置及诊断元数据。主题、语言、远程权限、DSH Workspace/Goal 与 Android 使用同一数据源；可见网页会定期重取会话/分组基线以观察手机侧改动。Provider API Key 和环境变量值都是只写字段；MCP 的 Header/环境值在 Web 响应中也只返回 `hasValue` 元数据。
 
 `storage.shared.list` 返回 `/var/minis/shared`、`/var/minis/skills`、`/var/minis/memory`；
 `storage.mounts.list` 返回手机已经通过 SAF 授权的外部目录。新授权必须发生在 Android 系统
@@ -112,7 +113,7 @@ agent.  settings.
 debug.logs.  debug.crash.  debug.appInfo
 ```
 
-允许前缀并不自动意味着每个方法安全。敏感凭据导入/导出以及可变更诊断状态的方法由 deny list 单独拒绝。可写的技能、记忆、MCP、定时任务、agent 或 settings 方法仍需要用户配置的 Remote 登录边界；它们不获得设备 UI 控制权限。
+允许前缀并不自动意味着每个方法安全。`provider.export/import`、诊断开关、日志正文和崩溃正文读取由 deny list 单独拒绝；MCP 读取结果还会递归脱敏。可写的技能、记忆、MCP、定时任务、agent 或 settings 方法仍需要用户配置的 Remote 登录边界；它们不获得设备 UI 控制权限。Web 不提供截图、点击、输入、Shell、任意文件读写或凭据导入导出。
 
 ## 7. 作业能力的真实边界
 
@@ -120,8 +121,10 @@ debug.logs.  debug.crash.  debug.appInfo
 
 ## 8. 相关源码
 
-- `src/android/app/src/main/assets/remote/app.js` — 客户端 snapshot、事件去重、增量 DOM 投影与重连。
+- `src/android/app/src/main/assets/minis/` — 默认 Minis Web bundle、登录页及控制台。
+- `src/android/app/src/main/java/com/openminis/app/remote/DshApiAdapter.kt` — strict unary schema 与原生 journal 事件翻译。
 - `src/android/app/src/main/java/com/openminis/app/remote/RemoteAccessServer.kt` — 认证、HTTP route、WebSocket、RPC allow/deny policy。
+- `src/android/app/src/main/java/com/openminis/app/debug/SafeRemoteImporter.kt` — Skill/MCP HTTPS 导入的 SSRF 与大小边界。
 - `src/android/app/src/main/java/com/openminis/app/ui/chat/SessionEventHub.kt` — 追加 journal、watermark、materialized tail 和 Room replay。
 - `src/android/app/src/main/java/com/openminis/app/debug/HeadlessChatRunner.kt` — 获取共享会话 ViewModel 并构造远程投影。
 - [DSH-DISSECTION-2026-08-21.md](DSH-DISSECTION-2026-08-21.md) — source-adapted Harness RC8 边界与设计依据。

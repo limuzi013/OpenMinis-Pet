@@ -152,7 +152,16 @@ object CloudflareTunnelManager {
                     phase = "connecting",
                     detail = "Connecting to Cloudflare…",
                 )
-                val pb = prootProcessBuilder(app, "/opt/bin/cloudflared tunnel --no-autoupdate run")
+                // Android carrier/Wi-Fi networks frequently pass cloudflared's
+                // short QUIC pre-check but then drop the long-lived UDP/7844
+                // control stream. Auto mode waits through several exponential
+                // retries before falling back, leaving the UI in "connecting"
+                // for about a minute. TCP/7844 HTTP/2 is supported by named
+                // tunnels and is substantially more reliable on mobile networks.
+                val pb = prootProcessBuilder(
+                    app,
+                    "/opt/bin/cloudflared tunnel --no-autoupdate --protocol http2 run",
+                )
                 pb.environment()["TUNNEL_TOKEN"] = token
                 val p = pb.start()
                 process = p

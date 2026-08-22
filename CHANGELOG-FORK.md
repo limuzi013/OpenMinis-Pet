@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-08-22：DSH 设置融合、App/Web 双向数据与 URL 导入
+
+- 将原独立 Minis 控制台改为 DSH 设置面板内的原生 section，移除第二层全屏弹窗与悬浮入口，
+  并以 DSH 设计变量重写响应式样式；登录页同步改为同一视觉语言；
+- DSH Workspace 映射 Android 原生会话分组，补齐创建、重命名、删除、排序、移动会话和归档；
+  浏览器可见时每 5 秒重取会话/工作区权威基线，手机侧改动无需刷新页面；
+- DSH Goal 映射 `AgentStateStore`，主题、语言、权限和 Agent preset 映射真实 App 设置；设置写入
+  增加 revision 冲突检查，避免浏览器用旧值覆盖手机刚完成的修改；
+- 新增 `skills.importUrl` 与 `mcp.importUrl`；只允许公开 HTTPS/443，限制重定向与内容大小，
+  DNS 与实际连接都拒绝 localhost、私网、链路本地及 CGNAT，防止公网 Remote 变成 SSRF；
+- 修复 DSH 模型选择响应返回显示名而非模型 Entry ID 的问题；App 原生会话绑定继续作为权威；
+- Android 16 真机通过 Skill/MCP URL 导入及清理回归、Workspace 原生 Repository round-trip、
+  DSH 核心响应与 stale settings revision 仪器测试；版本更新为 `1.12-pet.15-SNAPSHOT`
+  （versionCode 35）。
+
+## 2026-08-22：Cloudflare Tunnel 真机修复
+
+- 修复部分移动网络虽然通过 QUIC 预检、却持续丢弃 UDP/7844 控制流，导致隧道长时间停在
+  “connecting”的问题；named tunnel 连接固定使用 HTTP/2，不再等待约一分钟的自动降级；
+- Android 16 arm64 真机验证：首条连接约 2.5 秒注册、4 条连接约 6 秒全部注册，公网 HTTPS
+  登录页返回 200；版本更新为 `1.12-pet.14-SNAPSHOT`（versionCode 34）。
+
+---
+
 ## 2026-08-21：Web/App 管理能力对齐、数字助手与宠物 P0
 
 - Web 控制中心接通 Provider、API Key、模型、技能、MCP、环境变量的真实增删改；会话模型与

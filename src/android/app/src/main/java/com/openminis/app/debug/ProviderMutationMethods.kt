@@ -58,9 +58,11 @@ internal object ProviderMutationMethods {
         val useResponsesAPI = params.optBoolean("useResponsesAPI", false)
         val seedBuiltInModels = params.optBoolean("seedBuiltInModels", true)
 
-        // Mirrors iOS gating: customBaseURL only honored on OpenAI-shape types.
-        if (customBaseURL != null && type != ProviderType.openAI) {
-            throw RPCException(-32602, "customBaseURL only supported for providerType=openAI")
+        // OpenAI-compatible and Anthropic-compatible endpoints both support a
+        // custom origin. Keep this in sync with provider.types so Web clients
+        // are not told Anthropic supports a field that creation then rejects.
+        if (customBaseURL != null && type != ProviderType.openAI && type != ProviderType.anthropic) {
+            throw RPCException(-32602, "customBaseURL only supported for providerType=openAI or anthropic")
         }
 
         // [T-ua-block-oauth-provider] customUserAgent only for apiKey providers.
@@ -214,7 +216,7 @@ internal object ProviderMutationMethods {
         }
         val probeURL = when (instance.providerType) {
             ProviderType.anthropic -> "$baseURL/v1/models"
-            ProviderType.gemini -> "$baseURL/v1beta/models?key=" + (repo.loadApiKey(id) ?: "")
+            ProviderType.gemini -> "$baseURL/v1beta/models"
             ProviderType.openAI -> if (baseURL.endsWith("/v1")) "$baseURL/models" else "$baseURL/v1/models"
             ProviderType.openRouter -> "$baseURL/models"
             // xAI exposes an OpenAI-compatible /models endpoint at the same base.
@@ -233,7 +235,7 @@ internal object ProviderMutationMethods {
             ProviderType.anthropic -> if (!key.isNullOrEmpty()) builder.header("x-api-key", key).header("anthropic-version", "2023-06-01")
             ProviderType.openAI -> if (!key.isNullOrEmpty()) builder.header("Authorization", "Bearer $key")
             ProviderType.openRouter -> if (!key.isNullOrEmpty()) builder.header("Authorization", "Bearer $key")
-            ProviderType.gemini -> { /* key in URL */ }
+            ProviderType.gemini -> if (!key.isNullOrEmpty()) builder.header("x-goog-api-key", key)
             // xAI: OpenAI-compat bearer header. Manual API key OR OAuth
             // access token can fill this slot.
             ProviderType.xAI -> if (!key.isNullOrEmpty()) builder.header("Authorization", "Bearer $key")
@@ -268,7 +270,7 @@ internal object ProviderMutationMethods {
                 put("latencyMs", System.currentTimeMillis() - start)
                 put("error", JSONObject().apply {
                     put("code", "network")
-                    put("message", e.message ?: e.javaClass.simpleName)
+                    put("message", "Connection failed (${e.javaClass.simpleName})")
                 })
             }
         }

@@ -1,5 +1,6 @@
 package com.openminis.app.tools
 
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -15,6 +16,12 @@ object AgentStateStore {
     data class Goal(
         val text: String = "",
         val active: Boolean = true,
+        /** DSH-compatible durable-looking identity for the process lifetime. */
+        val id: String = "",
+        val revision: Int = 0,
+        val phase: String = "active", // active | paused | complete
+        val maxGoalRounds: Int = 8,
+        val createdAt: Long = System.currentTimeMillis(),
         val updatedAt: Long = System.currentTimeMillis(),
     )
 
@@ -44,19 +51,65 @@ object AgentStateStore {
     // ── Goal ────────────────────────────────────────────────────────────────
     fun goalGet(sessionId: String): Goal = goals[sessionId] ?: Goal()
 
-    fun goalSet(sessionId: String, text: String): Goal {
-        val g = Goal(text = text.trim(), active = true)
-        if (g.text.isEmpty()) goals.remove(sessionId) else goals[sessionId] = g
-        return goals[sessionId] ?: Goal()
+    fun goalSet(sessionId: String, text: String, maxGoalRounds: Int? = null): Goal {
+        val clean = text.trim()
+        if (clean.isEmpty()) {
+            goals.remove(sessionId)
+            return Goal()
+        }
+        val now = System.currentTimeMillis()
+        val current = goals[sessionId]
+        val g = if (current == null) {
+            Goal(
+                text = clean,
+                active = true,
+                id = UUID.randomUUID().toString(),
+                revision = 1,
+                phase = "active",
+                maxGoalRounds = maxGoalRounds?.coerceIn(1, 100) ?: 8,
+                createdAt = now,
+                updatedAt = now,
+            )
+        } else {
+            current.copy(
+                text = clean,
+                active = current.phase == "active",
+                revision = current.revision + 1,
+                maxGoalRounds = maxGoalRounds?.coerceIn(1, 100) ?: current.maxGoalRounds,
+                updatedAt = now,
+            )
+        }
+        goals[sessionId] = g
+        return g
     }
 
     fun goalSetActive(sessionId: String, active: Boolean): Goal {
         val current = goalGet(sessionId)
         if (current.text.isBlank()) return current
-        val g = current.copy(active = active, updatedAt = System.currentTimeMillis())
+        val g = current.copy(
+            active = active,
+            phase = if (active) "active" else "paused",
+            revision = current.revision + 1,
+            updatedAt = System.currentTimeMillis(),
+        )
         goals[sessionId] = g
         return g
     }
+
+    fun goalComplete(sessionId: String): Goal {
+        val current = goalGet(sessionId)
+        if (current.text.isBlank()) return current
+        val g = current.copy(
+            active = false,
+            phase = "complete",
+            revision = current.revision + 1,
+            updatedAt = System.currentTimeMillis(),
+        )
+        goals[sessionId] = g
+        return g
+    }
+
+    fun goalClear(sessionId: String): Goal? = goals.remove(sessionId)
 
     // ── Todo ────────────────────────────────────────────────────────────────
     fun todoGet(sessionId: String): TodoList = todos[sessionId] ?: TodoList()

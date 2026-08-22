@@ -21,10 +21,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
@@ -72,11 +74,14 @@ class RemoteAccessServer(
     companion object {
         private const val TAG = "RemoteAccessServer"
         private const val MAX_BODY = 4 * 1024 * 1024
+        private const val MAX_HEADER_BYTES = 64 * 1024
+        private const val MAX_HEADER_LINES = 128
         private const val MAX_EDIT_FILE_BYTES = 2L * 1024 * 1024
         private const val SOCKET_TIMEOUT_MS = 30_000
         private const val SESSION_TTL_MS = 12L * 60L * 60L * 1000L
         private const val LOGIN_LOCK_MS = 60_000L
         private const val SESSION_COOKIE = "minis_session"
+        private const val MAX_SESSIONS = 128
         private const val WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
         private const val WEBSOCKET_SUBPROTOCOL = "minis.session.v1"
         private const val MAX_WEBSOCKET_FRAME_BYTES = 256 * 1024
@@ -110,6 +115,9 @@ class RemoteAccessServer(
     // behind a non-atomic increment from concurrent connections.
     private val failedLoginsByClient = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
     private val loginLockedUntilByClient = ConcurrentHashMap<String, Long>()
+    /** Recently resolved browser interactions, retained briefly for every open tab's poll loop. */
+    private val resolvedApprovalOutcomes = ConcurrentHashMap<String, String>()
+    private val resolvedQuestionOutcomes = ConcurrentHashMap<String, String>()
 
     @Synchronized
     fun start(): Boolean {
@@ -170,6 +178,8 @@ class RemoteAccessServer(
         acceptJob?.cancel()
         acceptJob = null
         sessions.clear()
+        resolvedApprovalOutcomes.clear()
+        resolvedQuestionOutcomes.clear()
         scope.cancel()
     }
 
@@ -181,6 +191,7 @@ class RemoteAccessServer(
         val headers: Map<String, String>,
         val body: String,
         val remoteAddress: String? = null,
+        val localAddress: String? = null,
     )
 
     private fun handle(socket: Socket) {
@@ -189,7 +200,17 @@ class RemoteAccessServer(
             val input = BufferedInputStream(s.getInputStream())
             val output = BufferedOutputStream(s.getOutputStream())
             try {
-                val req = readRequest(input, s.inetAddress?.hostAddress) ?: return
+                val req = readRequest(
+                    input,
+                    remoteAddress = s.inetAddress?.hostAddress,
+                    localAddress = s.localAddress?.hostAddress,
+                ) ?: return
+                // Reject DNS-rebinding authorities before authentication,
+                // static assets, preflight handling, or WebSocket upgrades.
+                if (!isAllowedRequestHost(req)) {
+                    respondJson(output, 421, JSONObject().put("error", "unrecognized host"))
+                    return
+                }
                 if (req.method == "OPTIONS") {
                     respond(output, 204, "text/plain; charset=utf-8", "")
                     return
@@ -234,6 +255,8 @@ class RemoteAccessServer(
                 }
             } catch (e: BodyTooLargeException) {
                 respondJson(output, 413, JSONObject().put("error", "request body too large"))
+            } catch (e: HeadersTooLargeException) {
+                respondJson(output, 431, JSONObject().put("error", "request headers too large"))
             } catch (e: IllegalArgumentException) {
                 respondJson(output, 400, JSONObject().put("error", e.message ?: "bad request"))
             } catch (e: org.json.JSONException) {
@@ -290,10 +313,14 @@ class RemoteAccessServer(
                 }
                 failedLoginsByClient.remove(clientKey)
                 loginLockedUntilByClient.remove(clientKey)
-                // Opportunistic sweep: drop expired sessions so the map
-                // cannot grow without bound on repeated logins.
+                // Opportunistic sweep and hard capacity bound: repeated
+                // successful logins must not grow the in-memory table forever.
                 val expired = sessions.entries.filter { it.value <= now }.map { it.key }
                 if (expired.isNotEmpty()) expired.forEach(sessions::remove)
+                while (sessions.size >= MAX_SESSIONS) {
+                    val oldest = sessions.entries.minByOrNull { it.value }?.key ?: break
+                    sessions.remove(oldest)
+                }
                 val id = newSessionId()
                 sessions[id] = now + SESSION_TTL_MS
                 val cookie = buildString {
@@ -341,8 +368,7 @@ class RemoteAccessServer(
      */
     private fun loginClientKey(req: Request): String {
         val peer = req.remoteAddress ?: "unknown"
-        val isLoopback = peer == "127.0.0.1" || peer == "::1"
-        return if (isLoopback) {
+        return if (isLoopbackPeer(req)) {
             req.headers["cf-connecting-ip"]?.trim()?.takeIf { it.isNotEmpty() } ?: peer
         } else {
             peer
@@ -363,9 +389,67 @@ class RemoteAccessServer(
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 
-    private fun isHttps(req: Request): Boolean =
+    private fun isLoopbackPeer(req: Request): Boolean =
+        literalAddress(req.remoteAddress)?.isLoopbackAddress == true
+
+    private fun hasForwardedHttps(req: Request): Boolean =
         req.headers["x-forwarded-proto"]?.equals("https", ignoreCase = true) == true ||
             req.headers["cf-visitor"]?.contains("\"scheme\":\"https\"") == true
+
+    /**
+     * Named Cloudflare tunnels may not have a hostname stored in the App.
+     * Recognize the local connector by its loopback socket plus Cloudflare's
+     * client-IP and HTTPS headers. A rebinding browser cannot attach these
+     * non-simple headers without a CORS preflight, which this server denies.
+     */
+    private fun isTrustedTunnelRequest(req: Request): Boolean =
+        isLoopbackPeer(req) &&
+            literalAddress(req.headers["cf-connecting-ip"]?.trim()) != null &&
+            hasForwardedHttps(req)
+
+    private fun isHttps(req: Request): Boolean = isTrustedTunnelRequest(req)
+
+    private fun authorityHostname(authority: String?): String? {
+        val raw = authority?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (raw.any { it.isWhitespace() } || raw.any { it == '/' || it == '\\' || it == '@' || it == ',' }) return null
+        val host = if (raw.startsWith('[')) {
+            val end = raw.indexOf(']')
+            if (end <= 1) return null
+            val suffix = raw.substring(end + 1)
+            if (suffix.isNotEmpty() && (!suffix.startsWith(':') || suffix.drop(1).toIntOrNull() == null)) return null
+            raw.substring(1, end)
+        } else if (raw.count { it == ':' } == 1) {
+            val suffix = raw.substringAfterLast(':')
+            if (suffix.toIntOrNull() != null) raw.substringBeforeLast(':') else raw
+        } else {
+            raw
+        }
+        return host.lowercase().trimEnd('.').takeIf { it.isNotEmpty() }
+    }
+
+    /** Parse only numeric literals; never DNS-resolve an attacker-controlled Host. */
+    private fun literalAddress(host: String?): InetAddress? {
+        val value = host?.substringBefore('%') ?: return null
+        val looksV4 = value.matches(Regex("^[0-9.]+$"))
+        val looksV6 = ':' in value && value.matches(Regex("^[0-9a-fA-F:.]+$"))
+        if (!looksV4 && !looksV6) return null
+        return runCatching { InetAddress.getByName(value) }.getOrNull()
+    }
+
+    private fun isAllowedRequestHost(req: Request): Boolean {
+        val host = authorityHostname(req.headers["host"]) ?: return false
+        if (host == "localhost") return true
+        if (isTrustedTunnelRequest(req)) return true
+        val configured = authorityHostname(RemoteAccessPrefs.cloudflareHostname(appContext))
+        if (configured != null && host == configured) return true
+
+        val requestedAddress = literalAddress(host) ?: return false
+        if (requestedAddress.isLoopbackAddress) return true
+        val localAddress = literalAddress(req.localAddress)
+        if (localAddress != null && requestedAddress == localAddress) return true
+        val boundAddress = literalAddress(bindHost)
+        return boundAddress != null && !boundAddress.isAnyLocalAddress && requestedAddress == boundAddress
+    }
 
     private fun isMutating(method: String): Boolean = method in setOf("POST", "PUT", "PATCH", "DELETE")
 
@@ -391,49 +475,29 @@ class RemoteAccessServer(
             respond(out, 405, "text/plain; charset=utf-8", "Method Not Allowed")
             return
         }
-        if (req.path.startsWith("/dsh") || req.path.startsWith("/assets/")
-            || req.path.startsWith("/plugins/") || req.path == "/favicon.svg"
-            || req.path == "/manifest.webmanifest") {
-            routeDshStatic(req, out)
+        // The retired handwritten Remote client is no longer an alternate UI.
+        if (req.path == "/remote" || req.path == "/remote/" || req.path == "/dsh" || req.path == "/dsh/") {
+            respond(out, 302, "text/plain; charset=utf-8", "Minis Web", mapOf("Location" to "/"))
             return
         }
-        val asset = when (req.path) {
-            "/", "/index.html" -> "remote/index.html"
-            "/app.css" -> "remote/app.css"
-            "/app.js" -> "remote/app.js"
-            "/md.js" -> "remote/md.js"
-            "/marked.js" -> "remote/marked.js"
-            "/purify.js" -> "remote/purify.js"
-            "/ds-tokens.css" -> "remote/ds-tokens.css"
-            "/ds-scrollbar.css" -> "remote/ds-scrollbar.css"
-            else -> null
-        }
-        if (asset == null) {
-            respond(out, 404, "text/plain; charset=utf-8", "Not Found")
+
+        val leaf = req.path.substringAfterLast('/')
+        val isDocumentNavigation = leaf.isEmpty() || !leaf.contains('.') || leaf.endsWith(".html")
+        if (isDocumentNavigation && authenticate(req) == AuthKind.NONE) {
+            val login = appContext.assets.open("minis/login.html").use { it.readBytes() }
+            respondBytes(out, 200, "text/html; charset=utf-8", login)
             return
         }
-        val mime = when {
-            asset.endsWith(".html") -> "text/html; charset=utf-8"
-            asset.endsWith(".css") -> "text/css; charset=utf-8"
-            asset.endsWith(".js") -> "application/javascript; charset=utf-8"
-            else -> "application/octet-stream"
-        }
-        val bytes = appContext.assets.open(asset).use { it.readBytes() }
-        respondBytes(out, 200, mime, bytes)
+        routeMinisStatic(req, out)
     }
 
-    private fun routeDshStatic(req: Request, out: BufferedOutputStream) {
-        val assetPath = when {
-            req.path == "/dsh" || req.path == "/dsh/" || req.path == "/dsh/index.html" -> "dsh/index.html"
-            req.path.startsWith("/dsh/") -> {
-                val sub = req.path.removePrefix("/dsh/").replace("..", "").replace("\\", "/")
-                if (sub.isEmpty()) "dsh/index.html" else "dsh/$sub"
-            }
-            else -> {
-                val sub = req.path.removePrefix("/").replace("..", "").replace("\\", "/")
-                if (sub.isEmpty()) "dsh/index.html" else "dsh/$sub"
-            }
+    private fun routeMinisStatic(req: Request, out: BufferedOutputStream) {
+        val raw = req.path.removePrefix("/")
+        if (raw.contains('\\') || raw.contains('\u0000') || raw.split('/').any { it == ".." }) {
+            throw IllegalArgumentException("invalid asset path")
         }
+        val sub = raw.split('/').filter { it.isNotEmpty() && it != "." }.joinToString("/")
+        val assetPath = if (sub.isEmpty() || sub == "index.html") "minis/index.html" else "minis/$sub"
         val mime = when {
             assetPath.endsWith(".html") -> "text/html; charset=utf-8"
             assetPath.endsWith(".css") -> "text/css; charset=utf-8"
@@ -444,13 +508,19 @@ class RemoteAccessServer(
             assetPath.endsWith(".woff2") -> "font/woff2"
             assetPath.endsWith(".ttf") -> "font/ttf"
             assetPath.endsWith(".png") -> "image/png"
+            assetPath.endsWith(".webp") -> "image/webp"
             else -> "application/octet-stream"
         }
         try {
             val bytes = appContext.assets.open(assetPath).use { it.readBytes() }
             respondBytes(out, 200, mime, bytes)
         } catch (_: java.io.FileNotFoundException) {
-            val fallback = appContext.assets.open("dsh/index.html").use { it.readBytes() }
+            // Never disguise a missing script/style/font as the SPA document.
+            if (assetPath.substringAfterLast('/').contains('.')) {
+                respond(out, 404, "text/plain; charset=utf-8", "Not Found")
+                return
+            }
+            val fallback = appContext.assets.open("minis/index.html").use { it.readBytes() }
             respondBytes(out, 200, "text/html; charset=utf-8", fallback)
         }
     }
@@ -505,6 +575,10 @@ class RemoteAccessServer(
             }
             // ---- 手机端已有能力的 Web 侧入口 ----
             // 全部转调既有的 Debug RPC 方法，避免第二套会话逻辑。
+            "/api/respond" -> {
+                requireMethod(req, "POST")
+                routeMinisClientResponse(req, out)
+            }
             "/api/rpc" -> {
                 // 转发到 App 内部的 JSON-RPC 分发器，但只放行白名单方法。
                 val rpcBody = JSONObject(req.body)
@@ -520,7 +594,7 @@ class RemoteAccessServer(
                     if (!rpcBody.has("jsonrpc")) rpcBody.put("jsonrpc", "2.0")
                     if (!rpcBody.has("id")) rpcBody.put("id", 1)
                     val raw = DebugRPCHandler(appContext).handle(rpcBody.toString())
-                    respond(out, 200, "application/json; charset=utf-8", raw)
+                    respond(out, 200, "application/json; charset=utf-8", redactWebRpcResponse(method, raw))
                 }
             }
             "/api/models" -> {
@@ -634,7 +708,7 @@ class RemoteAccessServer(
                     // lifts that. This makes the settings preset a real gate
                     // instead of a decorative switch.
                     if (RemotePermissionPolicy.preset(appContext) == RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
-                        !b.optString("path").startsWith("/var/minis/workspace")
+                        !isWorkspacePath(b.optString("path"))
                     ) {
                         throw IllegalArgumentException("workspace-write preset: writes are limited to /var/minis/workspace")
                     }
@@ -677,7 +751,7 @@ class RemoteAccessServer(
                 }
                 // Permission preset gate, same policy as /api/file writes.
                 if (RemotePermissionPolicy.preset(appContext) == RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
-                    !b.optString("path").startsWith("/var/minis/workspace")
+                    !isWorkspacePath(b.optString("path"))
                 ) {
                     throw IllegalArgumentException("workspace-write preset: edits are limited to /var/minis/workspace")
                 }
@@ -744,11 +818,22 @@ class RemoteAccessServer(
                 val newPassword = body.optString("newPassword", "")
                 val changesIdentity = requestedUser != oldUser || newPassword.isNotEmpty()
                 if (changesIdentity) {
+                    val now = System.currentTimeMillis()
+                    val clientKey = loginClientKey(req)
+                    val lockedUntil = loginLockedUntilByClient[clientKey]
+                    if (lockedUntil != null && now < lockedUntil) {
+                        respondJson(out, 429, JSONObject().put("error", "too many password attempts").put("retryAfterMs", lockedUntil - now))
+                        return
+                    }
                     val current = body.optString("currentPassword", "").toCharArray()
                     if (!RemoteAccessPrefs.verifyLogin(appContext, oldUser, current)) {
+                        val counter = failedLoginsByClient.computeIfAbsent(clientKey) { java.util.concurrent.atomic.AtomicInteger() }
+                        if (counter.incrementAndGet() >= 5) loginLockedUntilByClient[clientKey] = now + LOGIN_LOCK_MS
                         respondJson(out, 403, JSONObject().put("error", "current password is incorrect"))
                         return
                     }
+                    failedLoginsByClient.remove(clientKey)
+                    loginLockedUntilByClient.remove(clientKey)
                     if (requestedUser != oldUser) RemoteAccessPrefs.setUsername(appContext, requestedUser)
                     if (newPassword.isNotEmpty()) RemoteAccessPrefs.setPassword(appContext, newPassword.toCharArray())
                 }
@@ -833,6 +918,9 @@ class RemoteAccessServer(
      * sandbox (the agent has a shell). canonicalFile resolves those links;
      * anything that lands outside the expected host root is rejected.
      */
+    private fun isWorkspacePath(path: String): Boolean =
+        path == "/var/minis/workspace" || path.startsWith("/var/minis/workspace/")
+
     private fun resolveSessionFile(sessionId: String, linuxPath: String): File {
         if (linuxPath.contains("..")) throw IllegalArgumentException("'..' is not allowed")
         val resolved = PRootKernel.resolveSessionHostPath(sessionId, linuxPath, appContext)
@@ -863,11 +951,13 @@ class RemoteAccessServer(
         if (linuxPath.startsWith("/var/minis/")) {
             val subdir = linuxPath.removePrefix("/var/minis/").substringBefore('/')
             if (subdir.isNotEmpty()) {
-                return try {
-                    File(appContext.filesDir, "minis-sessions/$sessionId/$subdir").canonicalPath
-                } catch (_: Exception) {
-                    null
-                }
+                // Ask the same mapper that resolved the target. Some subdirs
+                // (workspace/attachments) are per-session while memory,
+                // skills and shared are global bind mounts.
+                val mappedRoot = PRootKernel.resolveSessionHostPath(
+                    sessionId, "/var/minis/$subdir", appContext,
+                )
+                return try { mappedRoot?.canonicalPath } catch (_: Exception) { null }
             }
         }
         return try {
@@ -1079,26 +1169,50 @@ class RemoteAccessServer(
 
         val sessionId = req.query["sessionId"] ?: ""
         if (sessionId.isEmpty()) {
-            peer.sendText(dshServerRequest("session/subscribed", JSONObject().apply {
-                put("sessionId", "")
-                put("lastSeq", 0)
-                put("reset", false)
-            }).toString())
+            // The browser transport intentionally opens one query-less mux
+            // socket for every session (WebApiClient.openMux ignores payload).
+            // Fan out the process-wide native event flow; waiting for a query
+            // parameter here leaves the UI connected but permanently stale.
+            val seenApprovals = mutableMapOf<String, String>()
+            val seenQuestions = mutableMapOf<String, String>()
             var nextPingAt = System.currentTimeMillis() + WEBSOCKET_PING_INTERVAL_MS
             val expiresAt = System.currentTimeMillis() + WEBSOCKET_MAX_LIFETIME_MS
             try {
-                while (peer.isOpen() && System.currentTimeMillis() < expiresAt) {
-                    val now = System.currentTimeMillis()
-                    if (now >= nextPingAt) {
-                        if (now - peer.lastPongAt() > WEBSOCKET_PONG_GRACE_MS) {
-                            peer.close(1001, "pong timeout"); break
+                coroutineScope {
+                    val eventPump = launch {
+                        com.openminis.app.ui.chat.SessionEventHub.events.collect { event ->
+                            if (!peer.isOpen()) return@collect
+                            val frame = DshApiAdapter.nativeEventToMuxFrame(
+                                event.sessionId,
+                                event.toEventJson(),
+                            )
+                            peer.sendText(dshServerRequest("events.mux", frame.optString("type"), frame).toString())
                         }
-                        peer.sendPing()
-                        nextPingAt = now + WEBSOCKET_PING_INTERVAL_MS
                     }
-                    Thread.sleep(1000L.coerceAtMost(nextPingAt - System.currentTimeMillis()).coerceAtLeast(50L))
+                    try {
+                        while (peer.isOpen() && System.currentTimeMillis() < expiresAt) {
+                            emitPendingMinisInteractions(peer, seenApprovals, seenQuestions)
+                            val now = System.currentTimeMillis()
+                            if (now >= nextPingAt) {
+                                if (now - peer.lastPongAt() > WEBSOCKET_PONG_GRACE_MS) {
+                                    peer.close(1001, "pong timeout")
+                                    break
+                                }
+                                peer.sendPing()
+                                nextPingAt = now + WEBSOCKET_PING_INTERVAL_MS
+                            }
+                            delay(250L)
+                        }
+                    } finally {
+                        eventPump.cancel()
+                    }
                 }
-            } catch (_: Throwable) {}
+            } catch (t: Throwable) {
+                if (peer.isOpen()) {
+                    Log.w(TAG, "Minis mux stream failed: ${t.message}")
+                    peer.close(1011, "mux stream failed")
+                }
+            }
             if (peer.isOpen()) peer.close(1001, "reconnect")
             return
         }
@@ -1117,10 +1231,9 @@ class RemoteAccessServer(
                 peer.close(1011, "snapshot failed"); return
             }
             cursor = captured.lastSeq
-            peer.sendText(dshServerRequest("session/subscribed", JSONObject().apply {
+            peer.sendText(dshServerRequest("events.mux", "session/subscribed", JSONObject().apply {
                 put("sessionId", sessionId)
                 put("lastSeq", cursor)
-                put("reset", false)
             }).toString())
         }
 
@@ -1138,19 +1251,24 @@ class RemoteAccessServer(
                     val replay = com.openminis.app.debug.HeadlessChatRunner
                         .sessionEvents(appContext, sessionId, cursor)
                     if (replay.resetRequired) {
-                        peer.sendText(dshServerRequest("session/subscribed", JSONObject().apply {
+                        peer.sendText(dshServerRequest("events.mux", "session/subscribed", JSONObject().apply {
                             put("sessionId", sessionId)
                             put("lastSeq", replay.latestSeq)
-                            put("reset", true)
                         }).toString())
                         cursor = replay.latestSeq
                     } else {
                         replay.events.forEach { event ->
                             if (peer.isOpen()) {
-                                peer.sendText(dshServerRequest("session/event", JSONObject().apply {
-                                    put("sessionId", sessionId)
-                                    put("event", event.toEventJson())
-                                }).toString())
+                                // The native journal's payload shapes differ from
+                                // DSH's for the three message-producing events —
+                                // see DshApiAdapter.nativeEventToMuxFrame.
+                                val frame = DshApiAdapter.nativeEventToMuxFrame(
+                                    sessionId, event.toEventJson()
+                                )
+                                val type = frame.optString("type")
+                                peer.sendText(
+                                    dshServerRequest("events.mux", type, frame).toString()
+                                )
                             }
                         }
                         cursor = replay.latestSeq
@@ -1176,6 +1294,186 @@ class RemoteAccessServer(
         }
     }
 
+    /**
+     * Bridge the native in-process approval/question registries into the Minis
+     * mux contract. They do not live in the durable session journal because a
+     * request only exists while its suspended agent turn is alive.
+     */
+    private fun emitPendingMinisInteractions(
+        peer: WebSocketPeer,
+        seenApprovals: MutableMap<String, String>,
+        seenQuestions: MutableMap<String, String>,
+    ) {
+        val approvals = com.openminis.app.tools.ApprovalSeam.pendingFor(null)
+        val approvalIds = approvals.mapTo(mutableSetOf()) { it.id }
+        approvals.forEach { approval ->
+            if (seenApprovals.putIfAbsent(approval.id, approval.sessionId) == null) {
+                val payload = JSONObject()
+                    .put("sessionId", approval.sessionId)
+                    .put("approvalId", approval.id)
+                    .put("toolName", approval.toolName)
+                    .put("reason", approval.summary)
+                peer.sendText(dshServerRequest(
+                    method = "events.mux",
+                    type = "approval/requested",
+                    payload = payload,
+                    rpcId = minisInteractionRpcId("approval", approval.id),
+                ).toString())
+            }
+        }
+        val finishedApprovals = seenApprovals.keys.filterNot { it in approvalIds }
+        finishedApprovals.forEach { approvalId ->
+            val sid = seenApprovals.remove(approvalId) ?: return@forEach
+            peer.sendText(dshServerRequest("events.mux", "approval/resolved", JSONObject()
+                .put("sessionId", sid)
+                .put("approvalId", approvalId)
+                .put("outcome", resolvedApprovalOutcomes[approvalId] ?: "unavailable")).toString())
+        }
+
+        val questions = com.openminis.app.tools.QuestionCenter.pendingFor(null)
+        val questionIds = questions.mapTo(mutableSetOf()) { it.id }
+        questions.forEach { question ->
+            if (seenQuestions.putIfAbsent(question.id, question.sessionId) == null) {
+                val item = JSONObject()
+                    .put("id", question.id)
+                    .put("question", question.prompt)
+                    .put("header", "Minis")
+                    .put("multiSelect", question.multiple)
+                if (question.options.isNotEmpty()) {
+                    item.put("options", JSONArray().apply {
+                        question.options.forEach { option ->
+                            put(JSONObject().apply {
+                                put("label", option.label)
+                                if (option.recommended) put("description", "推荐")
+                            })
+                        }
+                    })
+                }
+                val payload = JSONObject()
+                    .put("sessionId", question.sessionId)
+                    .put("questions", JSONArray().put(item))
+                peer.sendText(dshServerRequest(
+                    method = "events.mux",
+                    type = "question/requested",
+                    payload = payload,
+                    rpcId = minisInteractionRpcId("question", question.id),
+                ).toString())
+            }
+        }
+        val finishedQuestions = seenQuestions.keys.filterNot { it in questionIds }
+        finishedQuestions.forEach { questionId ->
+            val sid = seenQuestions.remove(questionId) ?: return@forEach
+            peer.sendText(dshServerRequest("events.mux", "question/resolved", JSONObject()
+                .put("sessionId", sid)
+                .put("questionRpcId", minisInteractionRpcId("question", questionId))
+                .put("outcome", resolvedQuestionOutcomes[questionId] ?: "cancelled")).toString())
+        }
+    }
+
+    /** Stable while a native interaction is pending, including reconnects. */
+    private fun minisInteractionRpcId(kind: String, nativeId: String): String =
+        java.util.UUID.nameUUIDFromBytes("minis:$kind:$nativeId".toByteArray(StandardCharsets.UTF_8)).toString()
+
+    /** Handle the browser's answer to an approval/requested or question/requested frame. */
+    private fun routeMinisClientResponse(req: Request, out: BufferedOutputStream) {
+        val envelope = JSONObject(req.body)
+        if (envelope.optString("type") != "client-response") {
+            respondJson(out, 200, JSONObject().put("accepted", false).put("reason", "bad-response"))
+            return
+        }
+        val rpcId = envelope.optString("rpcId", "")
+        val result = envelope.optJSONObject("result")
+        if (rpcId.isEmpty() || result == null) {
+            respondJson(out, 200, JSONObject().put("accepted", false).put("reason", "bad-response"))
+            return
+        }
+
+        val approval = com.openminis.app.tools.ApprovalSeam.pendingFor(null)
+            .firstOrNull { minisInteractionRpcId("approval", it.id) == rpcId }
+        if (approval != null) {
+            val value = result.optJSONObject("value")
+            val outcome = value?.optString("outcome", "").orEmpty()
+            val matches = result.optBoolean("ok", false) && value != null &&
+                value.optString("sessionId") == approval.sessionId &&
+                value.optString("approvalId") == approval.id &&
+                outcome in setOf("allowed-once", "rejected")
+            if (!matches) {
+                respondJson(out, 200, JSONObject().put("accepted", false).put("reason", "bad-response"))
+                return
+            }
+            if (resolvedApprovalOutcomes.size > 256) resolvedApprovalOutcomes.clear()
+            resolvedApprovalOutcomes[approval.id] = outcome
+            com.openminis.app.tools.ApprovalSeam.answer(approval.id, outcome == "allowed-once")
+            respondJson(out, 200, JSONObject().put("accepted", true))
+            return
+        }
+
+        val question = com.openminis.app.tools.QuestionCenter.pendingFor(null)
+            .firstOrNull { minisInteractionRpcId("question", it.id) == rpcId }
+        if (question != null) {
+            if (!result.optBoolean("ok", false)) {
+                val cancelled = result.optJSONObject("error")?.optString("code") == "cancelled"
+                if (!cancelled) {
+                    respondJson(out, 200, JSONObject().put("accepted", false).put("reason", "bad-response"))
+                    return
+                }
+                if (resolvedQuestionOutcomes.size > 256) resolvedQuestionOutcomes.clear()
+                resolvedQuestionOutcomes[question.id] = "cancelled"
+                com.openminis.app.tools.QuestionCenter.answer(
+                    question.id,
+                    com.openminis.app.tools.QuestionAnswer(skipped = true),
+                )
+                respondJson(out, 200, JSONObject().put("accepted", true))
+                return
+            }
+            val value = result.optJSONObject("value")
+            val answers = value?.optJSONObject("answer")?.optJSONArray("answers")
+            if (value == null || value.optString("sessionId") != question.sessionId || answers == null) {
+                respondJson(out, 200, JSONObject().put("accepted", false).put("reason", "bad-response"))
+                return
+            }
+            var answer: JSONObject? = null
+            for (i in 0 until answers.length()) {
+                val candidate = answers.optJSONObject(i) ?: continue
+                if (candidate.optString("id") == question.id) {
+                    answer = candidate
+                    break
+                }
+            }
+            if (answer == null) {
+                respondJson(out, 200, JSONObject().put("accepted", false).put("reason", "bad-response"))
+                return
+            }
+            val selected = mutableListOf<String>()
+            answer.optJSONArray("selected")?.let { array ->
+                for (i in 0 until array.length()) {
+                    val wireLabel = array.optString(i, "")
+                    if (wireLabel.isEmpty()) continue
+                    selected += question.options.firstOrNull {
+                        it.label == wireLabel || it.value == wireLabel
+                    }?.value ?: wireLabel
+                }
+            }
+            val custom = answer.optString("custom", "").trim().ifEmpty { null }
+            // The bundled question composer represents "Skip" as one valid
+            // answer row with an empty selection and no custom text.
+            if (resolvedQuestionOutcomes.size > 256) resolvedQuestionOutcomes.clear()
+            resolvedQuestionOutcomes[question.id] = "answered"
+            com.openminis.app.tools.QuestionCenter.answer(
+                question.id,
+                com.openminis.app.tools.QuestionAnswer(
+                    selected = selected,
+                    custom = custom,
+                    skipped = selected.isEmpty() && custom == null,
+                ),
+            )
+            respondJson(out, 200, JSONObject().put("accepted", true))
+            return
+        }
+
+        respondJson(out, 200, JSONObject().put("accepted", false).put("reason", "not-pending"))
+    }
+
     private suspend fun streamDshHostWebSocket(
         req: Request,
         input: BufferedInputStream,
@@ -1190,10 +1488,11 @@ class RemoteAccessServer(
             "remote-dsh-host-control",
         ).apply { isDaemon = true; start() }
 
-        peer.sendText(dshServerRequest("host/ready", JSONObject().apply {
-            put("platform", "android")
-        }).toString())
-
+        // No greeting frame: `hostFrameSchema` (client.js:5652) is a
+        // discriminatedUnion with no "host/ready" member, so such a frame is
+        // dropped by the client parser with a console error. DSH treats the
+        // socket reaching `open` as the ready signal (client.js:94-99); the
+        // session list it needs afterwards arrives over the unary API.
         var nextPingAt = System.currentTimeMillis() + WEBSOCKET_PING_INTERVAL_MS
         val expiresAt = System.currentTimeMillis() + WEBSOCKET_MAX_LIFETIME_MS
         try {
@@ -1212,9 +1511,24 @@ class RemoteAccessServer(
         if (peer.isOpen()) peer.close(1001, "reconnect")
     }
 
-    private fun dshServerRequest(type: String, payload: JSONObject): JSONObject = JSONObject().apply {
+    /**
+     * A DSH downlink frame.
+     *
+     * `serverRequestSchema` (dsh-client-connection/client.js:5170) requires
+     * `method` alongside type/rpcId/payload. A frame without it fails
+     * `serverRequestSchema.parse` in `readWebSocket` (client.js:10032) and is
+     * dropped with a console error — the stream stays open but delivers nothing,
+     * which reads exactly like "the backend is not connected".
+     */
+    private fun dshServerRequest(
+        method: String,
+        type: String,
+        payload: JSONObject,
+        rpcId: String = java.util.UUID.randomUUID().toString(),
+    ): JSONObject = JSONObject().apply {
         put("type", "server-request")
-        put("rpcId", java.util.UUID.randomUUID().toString())
+        put("rpcId", rpcId)
+        put("method", method)
         put("payload", payload.put("type", type))
     }
 
@@ -1503,16 +1817,27 @@ class RemoteAccessServer(
     }
 
     private class BodyTooLargeException : RuntimeException()
+    private class HeadersTooLargeException : RuntimeException()
 
-    private fun readRequest(input: BufferedInputStream, remoteAddress: String? = null): Request? {
+    private fun readRequest(
+        input: BufferedInputStream,
+        remoteAddress: String? = null,
+        localAddress: String? = null,
+    ): Request? {
         val requestLine = readLine(input) ?: return null
         val first = requestLine.split(' ', limit = 3)
         if (first.size < 2) throw IllegalArgumentException("invalid request line")
         val method = first[0].uppercase()
         val rawPath = first[1]
         val headers = linkedMapOf<String, String>()
+        var headerBytes = requestLine.toByteArray(StandardCharsets.UTF_8).size + 2
+        var headerLines = 0
         while (true) {
             val line = readLine(input) ?: break
+            headerBytes += line.toByteArray(StandardCharsets.UTF_8).size + 2
+            if (headerBytes > MAX_HEADER_BYTES || ++headerLines > MAX_HEADER_LINES) {
+                throw HeadersTooLargeException()
+            }
             if (line.isEmpty()) break
             val idx = line.indexOf(':')
             if (idx > 0) headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
@@ -1528,7 +1853,10 @@ class RemoteAccessServer(
         }
         val pathPart = rawPath.substringBefore('?')
         val query = parseQuery(rawPath.substringAfter('?', ""))
-        return Request(method, rawPath, decode(pathPart), query, headers, bytes.copyOf(offset).toString(StandardCharsets.UTF_8), remoteAddress)
+        return Request(
+            method, rawPath, decode(pathPart), query, headers,
+            bytes.copyOf(offset).toString(StandardCharsets.UTF_8), remoteAddress, localAddress,
+        )
     }
 
     private fun readLine(input: BufferedInputStream): String? {
@@ -1602,7 +1930,7 @@ class RemoteAccessServer(
      */
     private val RPC_DENIED_METHODS = setOf(
         "provider.export", "provider.import",
-        "debug.logs.setEnabled",
+        "debug.logs.setEnabled", "debug.logs.read", "debug.crash.read",
     )
 
     private fun isRpcMethodAllowed(method: String): Boolean =
@@ -1611,6 +1939,40 @@ class RemoteAccessServer(
             RPC_ALLOWED_PREFIXES.any {
                 if (it.endsWith(".")) method.startsWith(it) else method == it
             }
+
+    /** Never return MCP environment/header secret values over the public Web surface. */
+    private fun redactWebRpcResponse(method: String, raw: String): String {
+        if (!method.startsWith("mcp.")) return raw
+        val envelope = runCatching { JSONObject(raw) }.getOrNull() ?: return raw
+        redactMcpSecretMaps(envelope)
+        return envelope.toString()
+    }
+
+    private fun redactMcpSecretMaps(value: Any?) {
+        when (value) {
+            is JSONObject -> {
+                val keys = value.keys().asSequence().toList()
+                for (key in keys) {
+                    val child = value.opt(key)
+                    if ((key == "env" || key == "headers") && child is JSONObject) {
+                        val metadata = JSONObject()
+                        for (secretKey in child.keys()) {
+                            metadata.put(
+                                secretKey,
+                                JSONObject().put("hasValue", child.optString(secretKey).isNotEmpty()),
+                            )
+                        }
+                        value.put(key, metadata)
+                    } else {
+                        redactMcpSecretMaps(child)
+                    }
+                }
+            }
+            is JSONArray -> for (index in 0 until value.length()) {
+                redactMcpSecretMaps(value.opt(index))
+            }
+        }
+    }
 
     private fun respondJson(
         out: BufferedOutputStream,
@@ -1635,9 +1997,10 @@ class RemoteAccessServer(
         extraHeaders: Map<String, String> = emptyMap(),
     ) {
         val reason = when (code) {
-            200 -> "OK"; 204 -> "No Content"; 400 -> "Bad Request"; 401 -> "Unauthorized";
+            200 -> "OK"; 204 -> "No Content"; 302 -> "Found"; 400 -> "Bad Request"; 401 -> "Unauthorized";
             403 -> "Forbidden"; 404 -> "Not Found"; 405 -> "Method Not Allowed";
-            413 -> "Payload Too Large"; 426 -> "Upgrade Required"; 429 -> "Too Many Requests"; 503 -> "Service Unavailable";
+            413 -> "Payload Too Large"; 421 -> "Misdirected Request"; 426 -> "Upgrade Required";
+            429 -> "Too Many Requests"; 431 -> "Request Header Fields Too Large"; 503 -> "Service Unavailable";
             else -> "Error"
         }
         val headers = buildString {
@@ -1650,7 +2013,7 @@ class RemoteAccessServer(
             append("Referrer-Policy: no-referrer\r\n")
             append("X-Frame-Options: DENY\r\n")
             append("Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n")
-            append("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'\r\n")
+            append("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'\r\n")
             for ((name, value) in extraHeaders) append(name).append(": ").append(value).append("\r\n")
             append("\r\n")
         }.toByteArray(StandardCharsets.UTF_8)

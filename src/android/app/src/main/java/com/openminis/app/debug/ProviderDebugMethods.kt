@@ -131,7 +131,8 @@ internal object ProviderDebugMethods {
         val includeHidden = params.optBoolean("includeHidden", false)
         val instance = repo.instance(instanceId)
             ?: throw RPCException(-32602, "Instance not found: $instanceId")
-        val all = repo.config.value.modelEntries.filter { it.providerInstanceId == instanceId }
+        val config = repo.config.value
+        val all = config.modelEntries.filter { it.providerInstanceId == instanceId }
         val visible = if (includeHidden) all else all.filter { !it.isHidden }
         val arr = JSONArray()
         for (entry in visible) {
@@ -143,6 +144,7 @@ internal object ProviderDebugMethods {
                 put("baseModelDisplayName", entry.baseModel.displayName)
                 put("isCustom", entry.isCustom)
                 put("isHidden", entry.isHidden)
+                put("inAgentLoop", entry.id in config.agentLoopModelEntryIds)
                 put("supportsReasoning", effective.supportsReasoning ?: JSONObject.NULL)
                 put("contextWindow", effective.contextWindow ?: JSONObject.NULL)
                 put("maxOutputTokens", effective.maxOutputTokens ?: JSONObject.NULL)

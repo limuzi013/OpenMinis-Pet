@@ -17,18 +17,16 @@ iOS 相关代码与 iSH，但这不改变许可证义务**：本仓库是 OpenMi
 | [cppjieba](https://github.com/yanyiwu/cppjieba) | vendored (`jieba_jni`) | **MIT** | Chinese word segmentation (header-only + dictionaries) |
 | Alpine Linux minirootfs | downloaded at build time by `deps/prepare_alpine_rootfs.sh` | Aggregate of package licenses (musl **MIT**, BusyBox **GPL-2.0**, etc.) | Not stored in this repo; bundled into app builds as the default rootfs |
 
-## Web Remote 前端（`assets/remote/`）
-
-本分支为 Web 远程控制页面引入，均以单文件 UMD 形式随 APK 分发：
+## Web Remote 前端（`assets/minis/` 与兼容资源）
 
 | 组件 | 版本 | License | 用途 |
 |---|---|---|---|
-| [marked](https://github.com/markedjs/marked) | 15.0.12 | **MIT** | Markdown 解析（`marked.js`，许可证全文见 `assets/remote/LICENSE-marked.md`） |
-| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.14 | **MPL-2.0 OR Apache-2.0** | 渲染前净化模型输出，防 XSS（`purify.js`，许可证全文见 `assets/remote/LICENSE-dompurify`） |
-| [@deepseek-ai/dsh-client-ui-theme](https://www.npmjs.com/package/@deepseek-ai/dsh-client-ui-theme) | 0.0.1-rc.1 | **BSD-3-Clause** | 设计 token 与滚动条样式（`ds-tokens.css` / `ds-scrollbar.css`，取自公开 npm 包，许可证全文见 `assets/remote/LICENSE-deepseek-theme`）。BSD-3 第三条：不得以原作者名义为本项目背书——本项目与 DeepSeek 无任何关联。 |
-| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 0.1.0-rc.8 | **MIT** | 本地官方 rc8 源码是 Web Remote 的 source-adapted 信息架构、会话事件和交互细节参照；当前 `index.html` / `app.css` / `app.js` 为本项目原生实现，未捆绑 Harness 的 React/Cordis 前端 bundle。许可证全文见 `assets/remote/LICENSE-deepseek-harness-MIT`。本项目与 DeepSeek 无任何关联。 |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 0.1.0-rc.8 | **MIT** | Minis Web 的 React/Cordis 静态 bundle 和 wire schema 来自官方 rc8 的 source-adapted 移植；内部包 ID 保留。许可证全文见 `assets/minis/licenses/DeepSeek-Harness-MIT.txt`。本项目与 DeepSeek 无产品关联。 |
+| [@deepseek-ai/dsh-client-ui-theme](https://www.npmjs.com/package/@deepseek-ai/dsh-client-ui-theme) | 0.0.1-rc.1 | **BSD-3-Clause** | bundle 使用的设计 token/主题。许可证全文见 `assets/minis/licenses/dsh-client-ui-theme-BSD-3-Clause.txt`。原作者名称不得用于为本项目背书。 |
+| [marked](https://github.com/markedjs/marked) | 15.0.12 | **MIT** | 旧 `assets/remote/` 兼容页面的 Markdown 解析；许可证见 `assets/remote/LICENSE-marked.md`。 |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.14 | **MPL-2.0 OR Apache-2.0** | 旧兼容页面的 HTML 净化；许可证见 `assets/remote/LICENSE-dompurify`。 |
 
-页面在严格 CSP 下从 APK assets 提供，无法访问任何 CDN，因此两者随包分发而非外链。
+这些资源均从 APK assets 提供，不依赖 CDN。Minis 品牌修改不移除第三方版权、许可证、内部模块标识或必要来源说明。
 
 ## Android — Gradle dependencies
 

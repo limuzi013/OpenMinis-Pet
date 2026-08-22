@@ -10,19 +10,23 @@
 
 基线：官方 `1.12`（versionCode 24）。上游原始说明见 [README-upstream.md](README-upstream.md)。
 
-## 下载已验证 APK
+## 最新编译 APK
 
-[下载 `OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk`](releases/OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk)
+[下载 `OpenMinis-Pet-minis-web-pet15-arm64-debug.apk`](releases/OpenMinis-Pet-minis-web-pet15-arm64-debug.apk)
 
-- 版本：`1.12-pet.11-SNAPSHOT`（versionCode 31）
+- 版本：`1.12-pet.15-SNAPSHOT`（versionCode 35）
 - 架构：`arm64-v8a`
-- 大小：`54,194,427` bytes
-- SHA-256：`d5c5bfacd80a0bac517d3c63c664d77df42430d1217e94fbed61ac0e1c00d1c4`
-- 签名：debug keystore，仅供开发、自测和源码对应验证
+- 大小：`54,442,918` bytes
+- SHA-256：`c75a76151e3089244d3e983a2575fbbd5ab733130477c96c8be52618b9dde2d3`
+- 构建：WSL / JDK 17 / Android SDK 36，`:app:assembleDebug` 通过
+- 签名：Android Debug keystore；APK Signature Scheme v2 验证通过
 
-下载后可用 `adb install -r OpenMinis-Pet-dsh-remote-rc9-arm64-debug.apk` 安装。这个 APK
-对应下面所述的 Harness 风格事件流工作台、完整 Web 设置管理、默认数字助手修复和桌面宠物
-P0 迭代；后续快照如更换二进制，会同步更新文件名、字节数和校验值。
+下载后可用 `adb install -r OpenMinis-Pet-minis-web-pet15-arm64-debug.apk` 安装。这个 APK
+将 Minis 控制台融合进 DSH 设置页，补齐 Workspace/Goal/主题/语言/权限的数据映射，并支持
+Skill 与 MCP 的安全 HTTPS 链接导入。已在 Android 16 arm64 真机验证覆盖安装、共享原生
+Repository、严格 DSH 核心响应、Web Remote、本地服务与 Cloudflare Tunnel（固定 HTTP/2，
+4 条连接）。HyperOS 用户还需要在手机系统设置中允许后台运行并启用自启动，否则系统可能
+在 App 退到后台后冻结 Tunnel。
 
 ## 和官方版的关系
 
@@ -38,6 +42,14 @@ Android 以 `applicationId` 作为安装身份，所以装了这个不会覆盖�
 
 iOS 相关代码（`src/ios/`、iSH 沙盒、FFmpeg/LAME）已从本仓库移除——只做 Android，留着
 徒增体积和困惑。要 iOS 版请用[官方仓库](https://github.com/OpenMinis/OpenMinis)。
+
+## Ubuntu / Linux 内核说明
+
+Android 当前已经运行 Linux kernel。把 PRoot 用户空间换成 Ubuntu、用 Android vendor
+kernel 启动 Ubuntu Touch/Droidian，以及刷通用 mainline/Ubuntu kernel 是三件完全不同的事；
+Shizuku 也不是换内核的必需条件。针对 Xiaomi 15 `dada` / SM8750 的实机与公开 device tree
+评估见 [`docs/LINUX-ON-XIAOMI-15-DADA.md`](docs/LINUX-ON-XIAOMI-15-DADA.md)。本 APK 不会
+刷写 boot 分区，也不会把 Ubuntu 用户空间宣传成获得 Root 或替换内核。
 
 ## 2026-08-21 安全加固与设计分享
 
@@ -57,6 +69,8 @@ iOS 相关代码（`src/ios/`、iSH 沙盒、FFmpeg/LAME）已从本仓库移除
 - **LLM 请求日志脱敏**：authorization / x-api-key 等 7 类敏感头的值在记录时剥离
 - **子代理超时真取消**：不再"假装超时、底层继续烧 token"；回答 60k 截断
 - **登录限流 per-IP 分桶**：并发绕过和邻居反锁两个洞一起堵
+- **Web Host 与请求上限**：拒绝 DNS rebinding Host，HTTP 头累计限制 64 KiB / 128 行
+- **Web 秘密最小化**：MCP Header/环境值只返回已配置元数据；日志和崩溃正文不经公网 RPC 读取
 
 每条设计的动机、实现、对使用者的影响见
 [docs/DESIGN-HARDENING-2026-08-21.md](docs/DESIGN-HARDENING-2026-08-21.md)；
@@ -153,7 +167,7 @@ App 可以申请 Android 标准的 `ROLE_ASSISTANT`。设为系统默认助手�
   的 `session/event`；文本、思考、工具调用和完成状态按事件增量更新对应节点。断线以
   `afterSeq` 回放，发现保留窗口外的游标时重新取快照，而不会定时拉整段消息或重建聊天 DOM
 - 文件浏览 / 在线编辑、Shell 执行
-- **Harness 风格会话工作台**：目标、计划、待办与产出以按需 Details Inspector 呈现；
+- **Minis 会话工作台**：目标、计划、待办与产出以按需 Details Inspector 呈现；
   网页可直接编辑并与 Android 聊天页共享同一状态源，不会产生另一份网页专用任务。
   作业区只呈现 App 当前已登记的项；它不是一个已完成的通用、持久化后台作业平台
 - **执行轨迹与工具检查器**：工具调用/结果兼容当前 `toolUse` 与历史
@@ -176,15 +190,15 @@ App 可以申请 Android 标准的 `ROLE_ASSISTANT`。设为系统默认助手�
 
 Web 端复用的是 App 内部的 RPC 通道，但**按前缀白名单放行**：`provider.` /
 `chat.` / `skills.` / `memory.` / `soul.` / `mcp.` / `scheduled.` 以及少量诊断
-方法（`debug.logs.*`、`debug.crash.*`、`debug.appInfo`）。`debug.tap`、
+元数据方法。日志和崩溃列表可见，但正文读取被 deny list 拦截。`debug.tap`、
 `debug.inputText`、`debug.screenshot`、`debug.writeFile` 这类等于远程操控手机的
 方法被整个挡在网页之外，要用只能走本机 127.0.0.1:5321 调试端口。
 
-页面根据本地官方 DeepSeek Harness `0.1.0-rc.8` 的 **MIT 源码**做了 source-adapted
-实现：会话栏可收起为 56px rail，聊天始终是默认主区，Details Inspector 默认关闭并在
-空间不足时优先收起；任务、轨迹、设置和文件工作区均按需打开。没有把 Harness 的
-React/Cordis bundle 塞进 APK，也不冒充与 DeepSeek 有关联；主题与交互资源随 APK 内置，
-离线可用。
+Minis Web 基于 DeepSeek Harness `0.1.0-rc.8` 的 **MIT 源码**进行 source-adapted
+移植：React/Cordis 静态 bundle 已随 APK 放在 `assets/minis/`，用户可见标题、Logo、PWA
+信息和设置入口均为 Minis；内部 `@deepseek-ai/dsh-*` 模块 ID 为加载与 wire 兼容所必需，
+不会盲目改名。Android `ChatViewModel`、仓库和 AlarmManager 仍是唯一状态权威，并不声称
+与 DeepSeek 有产品关联。第三方版权与许可证署名继续保留，全部资源可离线使用。
 
 ## 装了之后
 

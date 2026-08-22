@@ -561,11 +561,17 @@ object CrashFrequencyDetector {
             column.addView(tv)
         }
 
-        addRow(R.string.crash_freq_method_email) {
-            dispatchZippedShare(activity, files, emailOnly = true, onClosed)
+        addRow(R.string.settings_submit_github_issues) {
+            runCatching {
+                activity.startActivity(Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://github.com/limuzi013/OpenMinis-Pet/issues/new"),
+                ))
+            }
+            finishClose(onClosed)
         }
         addRow(R.string.crash_freq_method_share) {
-            dispatchZippedShare(activity, files, emailOnly = false, onClosed)
+            dispatchZippedShare(activity, files, onClosed)
         }
         addRow(R.string.crash_freq_method_save) {
             if (saveLauncher != null) {
@@ -612,17 +618,10 @@ object CrashFrequencyDetector {
         onClosed?.invoke()
     }
 
-    /**
-     * Zip the [files] into cacheDir/share/ and fire ACTION_SEND with
-     * application/zip. When [emailOnly] is true we hint at an email
-     * client (EMAIL extra + setType message/rfc822 fallback) so the
-     * chooser surfaces Gmail / Outlook first; otherwise we use the
-     * generic share sheet so the user gets every share target.
-     */
+    /** Zip the selected logs and open the generic Android share sheet. */
     private fun dispatchZippedShare(
         ctx: Context,
         files: List<File>,
-        emailOnly: Boolean,
         onClosed: (() -> Unit)?,
     ) {
         try {
@@ -639,15 +638,7 @@ object CrashFrequencyDetector {
             val uri = FileProvider.getUriForFile(ctx, authority, zip)
             val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
             val subject = ctx.getString(R.string.crash_freq_email_subject, date)
-            // Project crash-report inbox — a public alias, safe to ship in
-            // open-source builds (replaced the maintainer's personal email).
-            val recipient = "dev@openminis.app"
-
-            val launched: Boolean = if (emailOnly) {
-                tryLaunchMailto(ctx, recipient, subject, uri)
-            } else {
-                tryLaunchShare(ctx, uri, subject)
-            }
+            val launched = tryLaunchShare(ctx, uri, subject)
             if (!launched) {
                 // Fallback path: generic ACTION_SEND chooser. Works
                 // everywhere even if no email app is installed (file

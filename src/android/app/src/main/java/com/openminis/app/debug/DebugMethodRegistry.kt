@@ -557,7 +557,7 @@ object DebugMethodRegistry {
                 ParamSpec("seedBuiltInModels", "bool", required = false, default = true, description = "If false, create instance with no model entries."),
             ),
             returns = "{instance:{...}}",
-            example = ex("providerType" to "openAI", "label" to "DeepSeek", "apiKey" to "sk-…", "customBaseURL" to "https://api.deepseek.com", "seedBuiltInModels" to false),
+            example = ex("providerType" to "openAI", "label" to "Custom API", "apiKey" to "sk-…", "customBaseURL" to "https://api.example.com", "seedBuiltInModels" to false),
         ),
         MethodSpec(
             name = "provider.instances.update",
@@ -614,7 +614,7 @@ object DebugMethodRegistry {
                 ParamSpec("supportsImageOutput", "bool", required = false, description = "Modality flag."),
             ),
             returns = "Entry shape (same as provider.models.list[].entries[i]).",
-            example = ex("instanceId" to "pi_xyz", "modelId" to "deepseek-v4-pro"),
+            example = ex("instanceId" to "pi_xyz", "modelId" to "vendor/model-pro"),
         ),
         MethodSpec(
             name = "provider.models.update",
@@ -797,6 +797,16 @@ object DebugMethodRegistry {
             example = ex("sessionId" to "6D0F…", "modelEntryId" to "…/gpt-5.6-sol"),
         ),
         MethodSpec(
+            name = "chat.session.selectThinkingLevel",
+            description = "Change the current session's reasoning effort without switching models.",
+            params = listOf(
+                ParamSpec("sessionId", "string", required = true, description = "Target session id."),
+                ParamSpec("thinkingLevel", "string", required = true, description = "off / low / medium / high / xhigh / max / ultra."),
+            ),
+            returns = "{sessionId,thinkingLevel,applied}",
+            example = ex("sessionId" to "6D0F…", "thinkingLevel" to "high"),
+        ),
+        MethodSpec(
             name = "chat.compact.markers.list",
             description = "List all compact markers on a session, oldest → newest. Includes v2 fields (anchorMessageId, version, summaryLength, summaryPreview).",
             params = listOf(
@@ -860,7 +870,7 @@ object DebugMethodRegistry {
                 ParamSpec("sessionId", "string", required = false, description = "Restrict to one session."),
             ),
             returns = "{query, count, total, results:[{sessionId, title, matchedCount, snippet, hits:[{messageId, role, createdAt, content}]}]}",
-            example = ex("query" to "DeepSeek 设计", "limit" to 20),
+            example = ex("query" to "Minis 设计", "limit" to 20),
         ),
         MethodSpec(
             name = "chat.feedback.put",
@@ -930,6 +940,15 @@ object DebugMethodRegistry {
             ),
             returns = "{skill:{id,name,description,version,body,…}}",
             example = ex("name" to "Project review", "description" to "Review a code project", "body" to "Inspect the repository…"),
+        ),
+        MethodSpec(
+            name = "skills.importUrl",
+            description = "Import or update a SKILL.md from a public HTTPS/GitHub URL.",
+            params = listOf(
+                ParamSpec("url", "string", required = true, description = "Public HTTPS URL to SKILL.md or its GitHub directory."),
+            ),
+            returns = "{skill:{id,name,description,version,sourceURL,body,…}}",
+            example = ex("url" to "https://github.com/example/skills/tree/main/project-review"),
         ),
         MethodSpec(
             name = "skills.update",
@@ -1092,6 +1111,13 @@ object DebugMethodRegistry {
             example = ex("configJson" to "{\"mcpServers\":{\"docs\":{\"url\":\"https://example.test/mcp\"}}}"),
         ),
         MethodSpec(
+            name = "mcp.importUrl",
+            description = "Download MCP JSON from a public HTTPS URL and import it into the native repository.",
+            params = listOf(ParamSpec("url", "string", required = true, description = "Public HTTPS URL containing MCP JSON.")),
+            returns = "{sourceURL,count,servers:[{…}]}",
+            example = ex("url" to "https://raw.githubusercontent.com/example/project/main/mcp.json"),
+        ),
+        MethodSpec(
             name = "mcp.toggle",
             description = "Enable or disable an MCP server.",
             params = listOf(
@@ -1185,13 +1211,43 @@ object DebugMethodRegistry {
             example = ex("id" to "…", "confirm" to true),
         ),
 
-        // ── Scheduled tasks (web remote: scheduled.*) ─────────────────────────
+        // ── Scheduled tasks (Minis Web mirrors native CRUD + run history) ─────
         MethodSpec(
             name = "scheduled.list",
-            description = "List scheduled tasks, newest run history included. Creation stays on-device.",
+            description = "List scheduled tasks with next trigger and run count.",
             params = emptyList(),
-            returns = "{tasks:[task.toJson()]}",
+            returns = "{tasks:[task],count}",
             example = ex(),
+        ),
+        MethodSpec(
+            name = "scheduled.get",
+            description = "Read one scheduled task, including its retained run history.",
+            params = listOf(ParamSpec("taskId", "string", required = true, description = "Scheduled task identifier.")),
+            returns = "{task}",
+            example = ex("taskId" to "task-1"),
+        ),
+        MethodSpec(
+            name = "scheduled.create",
+            description = "Create and register an Android scheduled task.",
+            params = listOf(
+                ParamSpec("label", "string", required = true, description = "Display label."),
+                ParamSpec("hour", "int", required = true, description = "Local wall-clock hour, 0..23."),
+                ParamSpec("minute", "int", required = true, description = "Local wall-clock minute, 0..59."),
+                ParamSpec("repeatMode", "string", required = true, description = "ONCE | DAILY | WEEKDAYS | CUSTOM."),
+                ParamSpec("customDays", "int[]", required = false, description = "Calendar day values 1..7 for CUSTOM."),
+                ParamSpec("prompt", "string", required = false, description = "Prompt for NEW_SESSION / APPEND_TO."),
+                ParamSpec("targetMode", "string", required = false, default = "NEW_SESSION", description = "NEW_SESSION | APPEND_TO:<sessionId> | RERUN:<sessionId>:<messageId>."),
+                ParamSpec("enabled", "bool", required = false, default = true, description = "Whether AlarmManager registration is active."),
+            ),
+            returns = "{task,created:true}",
+            example = ex("label" to "Morning review", "hour" to 9, "minute" to 0, "repeatMode" to "WEEKDAYS", "prompt" to "Review my workspace"),
+        ),
+        MethodSpec(
+            name = "scheduled.update",
+            description = "Patch and re-register an existing scheduled task.",
+            params = listOf(ParamSpec("taskId", "string", required = true, description = "Task id; all task fields are optional patches.")),
+            returns = "{task,updated:true}",
+            example = ex("taskId" to "task-1", "hour" to 10),
         ),
         MethodSpec(
             name = "scheduled.toggle",
@@ -1200,25 +1256,28 @@ object DebugMethodRegistry {
                 ParamSpec("taskId", "string", required = true, description = "Scheduled task identifier."),
                 ParamSpec("enabled", "bool", required = true, description = "New enabled state."),
             ),
-            returns = "{ok:true}",
+            returns = "{ok:true,task}",
             example = ex("taskId" to "task-1", "enabled" to true),
         ),
         MethodSpec(
             name = "scheduled.delete",
-            description = "Permanently remove a scheduled task.",
-            params = listOf(
-                ParamSpec("taskId", "string", required = true, description = "Scheduled task identifier."),
-            ),
-            returns = "{ok:true}",
+            description = "Permanently remove a scheduled task and cancel its alarm.",
+            params = listOf(ParamSpec("taskId", "string", required = true, description = "Scheduled task identifier.")),
+            returns = "{ok:true,taskId}",
             example = ex("taskId" to "task-1"),
         ),
         MethodSpec(
             name = "scheduled.run",
-            description = "Trigger a scheduled task immediately in the background and return instantly.",
-            params = listOf(
-                ParamSpec("taskId", "string", required = true, description = "Scheduled task identifier."),
-            ),
-            returns = "{ok:true} (async trigger)",
+            description = "Trigger a scheduled task immediately in the Android background runner.",
+            params = listOf(ParamSpec("taskId", "string", required = true, description = "Scheduled task identifier.")),
+            returns = "{ok:true,taskId,accepted:true}",
+            example = ex("taskId" to "task-1"),
+        ),
+        MethodSpec(
+            name = "scheduled.runs",
+            description = "List the retained execution records for one scheduled task.",
+            params = listOf(ParamSpec("taskId", "string", required = true, description = "Scheduled task identifier.")),
+            returns = "{taskId,runs:[{firedAt,sessionId?,preview?,ok}],count}",
             example = ex("taskId" to "task-1"),
         ),
 

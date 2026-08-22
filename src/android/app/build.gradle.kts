@@ -36,8 +36,8 @@ android {
         applicationId = "dev.openminispet.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 31
-        versionName = "1.12-pet.11-SNAPSHOT"
+        versionCode = 35
+        versionName = "1.12-pet.15-SNAPSHOT"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
