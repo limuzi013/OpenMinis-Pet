@@ -15,6 +15,8 @@
 - 新增 `skills.importUrl` 与 `mcp.importUrl`；只允许公开 HTTPS/443，限制重定向与内容大小，
   DNS 与实际连接都拒绝 localhost、私网、链路本地及 CGNAT，防止公网 Remote 变成 SSRF；
 - 修复 DSH 模型选择响应返回显示名而非模型 Entry ID 的问题；App 原生会话绑定继续作为权威；
+- 修复 Fork 更新比较丢弃 `-pet.N`、把所有 1.12 pet 构建误判为同版本的问题，并修正最高
+  Release 选择 comparator 只比较正负号的错误；
 - Android 16 真机通过 Skill/MCP URL 导入及清理回归、Workspace 原生 Repository round-trip、
   DSH 核心响应与 stale settings revision 仪器测试；版本更新为 `1.12-pet.15-SNAPSHOT`
   （versionCode 35）。

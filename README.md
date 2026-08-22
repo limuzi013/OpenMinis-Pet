@@ -17,7 +17,7 @@
 - 版本：`1.12-pet.15-SNAPSHOT`（versionCode 35）
 - 架构：`arm64-v8a`
 - 大小：`54,442,918` bytes
-- SHA-256：`c75a76151e3089244d3e983a2575fbbd5ab733130477c96c8be52618b9dde2d3`
+- SHA-256：`ed8355f6b4ccd0416d7edc82bc3729dc4398e98315b80664a7c9571bf8209fc0`
 - 构建：WSL / JDK 17 / Android SDK 36，`:app:assembleDebug` 通过
 - 签名：Android Debug keystore；APK Signature Scheme v2 验证通过
 

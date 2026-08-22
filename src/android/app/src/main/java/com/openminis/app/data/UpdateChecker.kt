@@ -183,9 +183,9 @@ object UpdateChecker {
                 // Highest version we've seen at all (used for the "release
                 // exists but is older or equal" → UpToDate decision and for
                 // logging).
-                val highest = candidates.maxWithOrNull(
-                    compareBy { compareVersions(it.versionName, "0") },
-                ) ?: candidates.first()
+                val highest = candidates.maxWithOrNull { left, right ->
+                    compareVersions(left.versionName, right.versionName)
+                } ?: candidates.first()
                 AppLogger.info(
                     TAG,
                     "highest-published tag=${highest.tagName} parsed=${highest.versionName} prerelease=${highest.isPrerelease} apk=${highest.apkUrl != null}",
@@ -197,7 +197,9 @@ object UpdateChecker {
                 val upgradeCandidate = candidates
                     .filter { it.apkUrl != null }
                     .filter { compareVersions(it.versionName, localVer) > 0 }
-                    .maxWithOrNull(compareBy { compareVersions(it.versionName, "0") })
+                    .maxWithOrNull { left, right ->
+                        compareVersions(left.versionName, right.versionName)
+                    }
 
                 if (upgradeCandidate != null) {
                     AppLogger.info(
@@ -272,17 +274,23 @@ object UpdateChecker {
     }
 
     /**
-     * Strip the leading `v` and any `-preview` / `-rc1` / etc. trailing
-     * label so the numeric comparator keeps `0.1` and `0.1-preview`
-     * treated as equivalent. Without this, "0.1 (local) vs 0.1-preview
-     * (remote)" reported the remote as newer because the trailing token
-     * fell into string comparison.
+     * Normalize GitHub tags and the local BuildConfig version onto one ordering.
+     *
+     * Fork builds use `1.12-pet.15-SNAPSHOT`; blindly removing everything after
+     * the first dash collapses pet.1, pet.15 and pet.999 all to `1.12`, making
+     * the updater permanently report "up to date". Preserve that counter as a
+     * numeric component while still treating ordinary `-preview`/`-rc` suffixes
+     * as labels on the same base release.
      */
-    private fun normalizeTag(tag: String): String {
+    internal fun normalizeTag(tag: String): String {
         val trimmed = tag.trim().removePrefix("v").removePrefix("V")
-        // "0.1-preview" → "0.1"; "0.1.0" → "0.1.0"; "1.2.3-rc1" → "1.2.3"
-        val dashIdx = trimmed.indexOf('-')
-        return if (dashIdx > 0) trimmed.substring(0, dashIdx) else trimmed
+        Regex("^(\\d+(?:\\.\\d+)*)-pet[.-]?(\\d+)(?:[-.].*)?$", RegexOption.IGNORE_CASE)
+            .matchEntire(trimmed)
+            ?.let { return "${it.groupValues[1]}.pet.${it.groupValues[2].toInt()}" }
+        Regex("^rc[.-]?(\\d+)$", RegexOption.IGNORE_CASE)
+            .matchEntire(trimmed)
+            ?.let { return "0.rc.${it.groupValues[1].toInt()}" }
+        return Regex("^\\d+(?:\\.\\d+)*").find(trimmed)?.value ?: "0"
     }
 
     /**
@@ -463,7 +471,7 @@ object UpdateChecker {
      * components fall back to lexicographic compare so a `1.0.0-rc1` build is
      * treated as "newer than 1.0.0" — acceptable noise for our use case.
      */
-    private fun compareVersions(a: String, b: String): Int {
+    internal fun compareVersions(a: String, b: String): Int {
         val ap = a.split('.', '-')
         val bp = b.split('.', '-')
         val n = maxOf(ap.size, bp.size)
