@@ -1,13 +1,13 @@
 # 文档索引
 
-本文按“当前契约”和“历史资料”分类，避免把旧设计稿误认为 pet.15 已交付能力。
+本文按“当前契约”和“历史资料”分类，避免把旧设计稿误认为 1.00-beta 已交付能力。
 
 ## 使用与构建
 
 | 文档 | 状态 | 内容 |
 |---|---|---|
 | [`../README.md`](../README.md) | 当前 | 项目入口、下载、功能、安全边界、Linux/Root 说明 |
-| [`../RELEASE-NOTES.md`](../RELEASE-NOTES.md) | pet.15 | 当前发布说明、校验值和限制 |
+| [`../RELEASE-NOTES.md`](../RELEASE-NOTES.md) | 1.00-beta | 当前发布说明、校验值和限制 |
 | [`../BUILD-CN.md`](../BUILD-CN.md) | 当前 | 中文完整构建步骤 |
 | [`../BUILDING.md`](../BUILDING.md) | 当前 | English build and troubleshooting guide |
 | [`../releases/README.md`](../releases/README.md) | 当前 | 仓库内 APK 清单与哈希 |

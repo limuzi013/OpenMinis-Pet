@@ -7,14 +7,15 @@
 
 - Repository：`https://github.com/limuzi013/OpenMinis-Pet`
 - Branch：`master`
-- pet.15 主功能提交：`da47c7b`
-- pet 版本排序修复：`6641d03`
-- Release tag：`v1.12-pet.15`
+- 新版本线起点提交：`92aaef2`（1.00-beta 起始）
+- Release tag：`v1.00-beta`
 - Package：`dev.openminispet.android`
-- Version：`1.12-pet.15-SNAPSHOT`（versionCode 35）
-- APK：`releases/OpenMinis-Pet-minis-web-pet15-arm64-debug.apk`
-- Size：`54,442,918` bytes
-- SHA-256：`ed8355f6b4ccd0416d7edc82bc3729dc4398e98315b80664a7c9571bf8209fc0`
+- Version：`1.00-beta`（versionCode 36）
+- APK：`releases/OpenMinis-Pet-1.00-beta-arm64-debug.apk`
+- Size：`54,437,205` bytes
+- SHA-256：`086ebaf7fc743ded373a1e297f2dbe2ccb653df094de0958760815476aea3a96`
+- 旧 `1.12-pet.N` 版本线（tags/releases/code 路径）已从仓库与 GitHub 移除；v1.00-beta 之后的
+  版本从 versionCode 36 继续递增。
 
 当前 APK 是 arm64 Debug 签名开发包，不是生产 release。
 
@@ -76,7 +77,7 @@
 - `:app:assembleDebugAndroidTest`：通过（已修复旧测试对 `mountedSessionId` 的引用）；
 - `DshApiAdapterTest`：通过；
 - `UpdateCheckerVersionTest`：通过；
-- pet.15 device instrumentation：DSH response/settings revision 和原生 Workspace round-trip 2/2；
+- Android 16 arm64 真机 DSH response/settings revision 与 Workspace Repository round-trip 验证通过（pet.15 期间完成）；
 - Skill/MCP HTTPS 导入、私网拒绝和清理回归：通过；
 - APK v2 signature、覆盖安装保留数据、本机服务和前台公网入口：通过；
 - 38 项 Provider 测试仍依赖公开仓库没有的 OAuth customization/network fixture。

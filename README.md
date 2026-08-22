@@ -1,7 +1,7 @@
 # OpenMinis Pet
 
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://github.com/limuzi013/OpenMinis-Pet/releases)
-[![Release](https://img.shields.io/badge/release-v1.12--pet.15-blue)](https://github.com/limuzi013/OpenMinis-Pet/releases/tag/v1.12-pet.15)
+[![Release](https://img.shields.io/badge/release-v1.00--beta-blue)](https://github.com/limuzi013/OpenMinis-Pet/releases/tag/v1.00-beta)
 [![ABI](https://img.shields.io/badge/ABI-arm64--v8a-orange)](#安装)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
@@ -19,19 +19,19 @@ Android 数据共用同一后端的 Minis Web 远程工作台。
 
 | 项目 | 值 |
 |---|---|
-| Release | [`v1.12-pet.15`](https://github.com/limuzi013/OpenMinis-Pet/releases/tag/v1.12-pet.15) |
-| Android 版本 | `1.12-pet.15-SNAPSHOT`（versionCode 35） |
+| Release | [`v1.00-beta`](https://github.com/limuzi013/OpenMinis-Pet/releases/tag/v1.00-beta) |
+| Android 版本 | `1.00-beta`（versionCode 36） |
 | applicationId | `dev.openminispet.android` |
 | ABI | `arm64-v8a` |
-| APK | `OpenMinis-Pet-minis-web-pet15-arm64-debug.apk` |
-| 大小 | `54,442,918` bytes |
-| SHA-256 | `ed8355f6b4ccd0416d7edc82bc3729dc4398e98315b80664a7c9571bf8209fc0` |
+| APK | `OpenMinis-Pet-1.00-beta-arm64-debug.apk` |
+| 大小 | `54,437,205` bytes |
+| SHA-256 | `086ebaf7fc743ded373a1e297f2dbe2ccb653df094de0958760815476aea3a96` |
 
 **当前 APK 使用 Android Debug 签名，只适合开发、自测和源码对应验证，不是生产发布包。**
 生产分发必须关闭 DebugServer、改用长期保管的 release keystore，并完成独立安全验收。
 
-- [下载 APK](https://github.com/limuzi013/OpenMinis-Pet/releases/download/v1.12-pet.15/OpenMinis-Pet-minis-web-pet15-arm64-debug.apk)
-- [查看对应源码](https://github.com/limuzi013/OpenMinis-Pet/tree/v1.12-pet.15)
+- [下载 APK](https://github.com/limuzi013/OpenMinis-Pet/releases/download/v1.00-beta/OpenMinis-Pet-1.00-beta-arm64-debug.apk)
+- [查看对应源码](https://github.com/limuzi013/OpenMinis-Pet/tree/v1.00-beta)
 - [查看发布说明](RELEASE-NOTES.md)
 
 ## 它是什么
@@ -135,7 +135,7 @@ Xiaomi 15 `dada` 的手机系统级移植评估另见
 要求 Android 8.0（API 26）或更高版本的 arm64 设备。
 
 ```bash
-adb install -r OpenMinis-Pet-minis-web-pet15-arm64-debug.apk
+adb install -r OpenMinis-Pet-1.00-beta-arm64-debug.apk
 ```
 
 `applicationId` 与官方版不同，因此可以和官方 OpenMinis 同时安装。首次使用建议：
@@ -177,7 +177,7 @@ SHA-256 的 vendored Termux 构建。Alpine rootfs 和 fork-built PRoot 二进�
 
 ## 验证状态与已知限制
 
-pet.15 已完成的验证包括：
+1.00-beta 已完成的验证包括：
 
 - JDK 17 / SDK 36 下 `:app:assembleDebug`；
 - `DshApiAdapterTest` 与更新版本排序回归测试；
