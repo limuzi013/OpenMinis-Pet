@@ -84,6 +84,14 @@ log_success() { echo -e "${GREEN}[build_proot] $1${NC}"; }
 log_warn()    { echo -e "${YELLOW}[build_proot] $1${NC}"; }
 log_error()   { echo -e "${RED}[build_proot] $1${NC}" >&2; exit 1; }
 
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
 # ----------------------------------------------------------------------------
 # Locate NDK + clang
 # ----------------------------------------------------------------------------
@@ -375,8 +383,8 @@ install_asset() {
     local want64="44ef39c1e1a18c09f6e4c4b5d6f8bba82d30596598bd155ec162d05c5122ff04"
     local want32="25f6bd90bc5a3d3088026289a0d3eaf3e502bd2b00e5cb74fadd9791132efa34"
     local have64 have32
-    have64=$(shasum -a 256 "$JNILIBS_DIR/libproot-loader.so" 2>/dev/null | awk '{print $1}')
-    have32=$(shasum -a 256 "$JNILIBS_DIR/libproot-loader32.so" 2>/dev/null | awk '{print $1}')
+    have64=$(sha256_file "$JNILIBS_DIR/libproot-loader.so" 2>/dev/null)
+    have32=$(sha256_file "$JNILIBS_DIR/libproot-loader32.so" 2>/dev/null)
     if [ "$have64" != "$want64" ]; then
         log_error "libproot-loader.so is NOT the vendored Termux build (sha256=${have64:-missing}). Restore: git checkout -- src/android/app/src/main/jniLibs/arm64-v8a/libproot-loader.so"
     fi

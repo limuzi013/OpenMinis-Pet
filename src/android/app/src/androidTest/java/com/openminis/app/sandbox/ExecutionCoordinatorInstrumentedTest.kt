@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -45,24 +46,28 @@ class ExecutionCoordinatorInstrumentedTest {
     // ==================== Session mounting ====================
 
     @Test
-    fun executeSetsMountedSessionId() = runBlocking {
+    fun executeCreatesPerSessionRuntime() = runBlocking {
         skipIfNoBoot()
 
         val sessionId = "session-mount-test"
-        ExecutionCoordinator.execute(sessionId, "echo hello")
+        val result = ExecutionCoordinator.execute(sessionId, "echo hello")
 
-        assertEquals(sessionId, ExecutionCoordinator.mountedSessionId)
+        assertEquals(0, result.exitCode)
+        assertTrue(result.output.contains("hello"))
+        assertTrue(File(context.filesDir, "minis-sessions/$sessionId").isDirectory)
     }
 
     @Test
-    fun executeSwitchesSessionMounts() = runBlocking {
+    fun executeKeepsDifferentSessionsIndependent() = runBlocking {
         skipIfNoBoot()
 
-        ExecutionCoordinator.execute("session-A", "echo a")
-        assertEquals("session-A", ExecutionCoordinator.mountedSessionId)
+        val resultA = ExecutionCoordinator.execute("session-A", "echo a")
+        val resultB = ExecutionCoordinator.execute("session-B", "echo b")
 
-        ExecutionCoordinator.execute("session-B", "echo b")
-        assertEquals("session-B", ExecutionCoordinator.mountedSessionId)
+        assertEquals(0, resultA.exitCode)
+        assertEquals(0, resultB.exitCode)
+        assertTrue(File(context.filesDir, "minis-sessions/session-A").isDirectory)
+        assertTrue(File(context.filesDir, "minis-sessions/session-B").isDirectory)
     }
 
     @Test
@@ -76,9 +81,8 @@ class ExecutionCoordinatorInstrumentedTest {
 
         ExecutionCoordinator.execute("session-X", "echo second")
 
-        // Mounts should remain the same (not cleared and re-added)
+        // Reusing one session must not grow the global mount registry.
         assertEquals(mountCount, PRootKernel.bindMounts.size)
-        assertEquals("session-X", ExecutionCoordinator.mountedSessionId)
     }
 
     @Test
@@ -230,36 +234,34 @@ class ExecutionCoordinatorInstrumentedTest {
     // ==================== sessionDidTerminate ====================
 
     @Test
-    fun sessionDidTerminateClearsMountsForMatchingSession() = runBlocking {
+    fun sessionDidTerminateAllowsCleanRecreation() = runBlocking {
         skipIfNoBoot()
 
-        ExecutionCoordinator.execute("session-terminate", "echo test")
-        assertEquals("session-terminate", ExecutionCoordinator.mountedSessionId)
-        assertTrue(PRootKernel.bindMounts.isNotEmpty())
+        val first = ExecutionCoordinator.execute("session-terminate", "echo first")
+        assertEquals(0, first.exitCode)
 
         ExecutionCoordinator.sessionDidTerminate("session-terminate")
 
-        assertNull(ExecutionCoordinator.mountedSessionId)
-        assertTrue(PRootKernel.bindMounts.isEmpty())
+        val recreated = ExecutionCoordinator.execute("session-terminate", "echo recreated")
+        assertEquals(0, recreated.exitCode)
+        assertTrue(recreated.output.contains("recreated"))
     }
 
     @Test
     fun sessionDidTerminateIgnoresMismatchedSession() = runBlocking {
         skipIfNoBoot()
 
-        ExecutionCoordinator.execute("session-keep", "echo test")
-        val mountsBefore = PRootKernel.bindMounts.size
-
+        ExecutionCoordinator.execute("session-keep", "echo first")
         ExecutionCoordinator.sessionDidTerminate("session-other")
 
-        assertEquals("session-keep", ExecutionCoordinator.mountedSessionId)
-        assertEquals(mountsBefore, PRootKernel.bindMounts.size)
+        val result = ExecutionCoordinator.execute("session-keep", "echo still-alive")
+        assertEquals(0, result.exitCode)
+        assertTrue(result.output.contains("still-alive"))
     }
 
     @Test
     fun sessionDidTerminateIsNoOpWhenNoSession() {
         ExecutionCoordinator.sessionDidTerminate("any-session")
-        assertNull(ExecutionCoordinator.mountedSessionId)
     }
 
     // ==================== stopCurrentCommand ====================
@@ -334,10 +336,7 @@ class ExecutionCoordinatorInstrumentedTest {
     }
 
     private fun skipIfNoBoot() {
-        if (!PRootKernel.isBooted) {
-            println("SKIP: PRoot not booted (assets not available)")
-            return
-        }
+        assumeTrue("PRoot not booted (assets unavailable)", PRootKernel.isBooted)
     }
 
     private fun resetKernel() {
@@ -349,12 +348,8 @@ class ExecutionCoordinatorInstrumentedTest {
         PRootKernel.clearBindMounts()
         PRootKernel.customEnvironment.clear()
 
-        // Reset ExecutionCoordinator mountedSessionId
-        try {
-            val field = ExecutionCoordinator::class.java.getDeclaredField("mountedSessionId")
-            field.isAccessible = true
-            field.set(ExecutionCoordinator, null)
-        } catch (_: Exception) { }
+        // Stop all per-session shells retained by ExecutionCoordinator.
+        ExecutionCoordinator.stopCurrentCommand()
     }
 
     private fun cleanupSessionDirs() {

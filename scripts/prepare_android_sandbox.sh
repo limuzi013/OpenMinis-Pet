@@ -1,86 +1,79 @@
 #!/usr/bin/env bash
+# Prepare the Android sandbox rootfs asset.
 #
-# Prepare Android sandbox assets:
-#   1. Download Alpine Linux aarch64 minirootfs
-#   2. Download PRoot aarch64 static binary from Termux packages
-#   3. Place both into src/android/app/src/main/assets/
+# PRoot itself is built from the pinned deps/proot submodule by
+# ./deps/build_proot.sh. This script only downloads the pinned Alpine arm64
+# minirootfs and verifies that the PRoot artifacts already exist, avoiding the
+# retired Termux package URL used by older revisions.
 #
-# Usage: ./scripts/prepare_android_sandbox.sh
-#
+# Usage (from repository root):
+#   git submodule update --init --recursive
+#   ./deps/build_proot.sh
+#   ./scripts/prepare_android_sandbox.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ASSETS_DIR="$PROJECT_ROOT/src/android/app/src/main/assets"
+JNILIBS_DIR="$PROJECT_ROOT/src/android/app/src/main/jniLibs/arm64-v8a"
 
 ALPINE_VERSION="3.21"
 ALPINE_RELEASE="3.21.3"
 ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/aarch64/alpine-minirootfs-${ALPINE_RELEASE}-aarch64.tar.gz"
+ALPINE_SHA256="ead8a4b37867bd19e7417dd078748e2312c0aea364403d96758d63ea8ff261ea"
 
-# Termux proot package — aarch64 static binary
-PROOT_VERSION="5.1.107-70"
-PROOT_DEB_URL="https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_${PROOT_VERSION}_aarch64.deb"
+ROOTFS_FILE="$ASSETS_DIR/alpine-minirootfs.tar.gz"
+PROOT_ASSET="$ASSETS_DIR/proot-aarch64"
+PROOT_JNILIB="$JNILIBS_DIR/libproot.so"
+LOADER64="$JNILIBS_DIR/libproot-loader.so"
 
 mkdir -p "$ASSETS_DIR"
 
-ROOTFS_FILE="$ASSETS_DIR/alpine-minirootfs.tar.gz"
-PROOT_FILE="$ASSETS_DIR/proot-aarch64"
-
-# --- Alpine rootfs ---
-if [ -f "$ROOTFS_FILE" ]; then
-    echo "✓ Alpine rootfs already exists: $ROOTFS_FILE"
-else
-    echo "Downloading Alpine Linux ${ALPINE_RELEASE} aarch64 minirootfs..."
-    curl -fSL -o "$ROOTFS_FILE" "$ALPINE_URL"
-    echo "✓ Downloaded: $ROOTFS_FILE ($(du -h "$ROOTFS_FILE" | cut -f1))"
-fi
-
-# --- PRoot binary ---
-if [ -f "$PROOT_FILE" ]; then
-    echo "✓ PRoot binary already exists: $PROOT_FILE"
-else
-    echo "Downloading PRoot ${PROOT_VERSION} aarch64 from Termux..."
-
-    TMPDIR="$(mktemp -d)"
-    trap 'rm -rf "$TMPDIR"' EXIT
-
-    DEB_FILE="$TMPDIR/proot.deb"
-    curl -fSL -o "$DEB_FILE" "$PROOT_DEB_URL"
-
-    # Extract .deb (it's an ar archive containing data.tar.xz)
-    cd "$TMPDIR"
-    ar x "$DEB_FILE"
-
-    # Extract data archive
-    if [ -f "data.tar.xz" ]; then
-        tar xf data.tar.xz
-    elif [ -f "data.tar.gz" ]; then
-        tar xzf data.tar.gz
-    elif [ -f "data.tar.zst" ]; then
-        zstd -d data.tar.zst -o data.tar
-        tar xf data.tar
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
     else
-        echo "Error: Could not find data archive in .deb"
-        ls -la "$TMPDIR"
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+if [ ! -f "$ROOTFS_FILE" ]; then
+    echo "Downloading Alpine Linux ${ALPINE_RELEASE} aarch64 minirootfs..."
+    tmp="${ROOTFS_FILE}.part"
+    rm -f "$tmp"
+    curl -fL --retry 3 --retry-delay 2 -o "$tmp" "$ALPINE_URL"
+    actual="$(sha256_file "$tmp")"
+    if [ "$actual" != "$ALPINE_SHA256" ]; then
+        rm -f "$tmp"
+        echo "ERROR: Alpine rootfs SHA-256 mismatch" >&2
+        echo "expected: $ALPINE_SHA256" >&2
+        echo "actual:   $actual" >&2
         exit 1
     fi
-
-    # Find the proot binary
-    PROOT_BIN=$(find "$TMPDIR" -name "proot" -type f | head -1)
-    if [ -z "$PROOT_BIN" ]; then
-        echo "Error: Could not find proot binary in extracted .deb"
-        find "$TMPDIR" -type f
+    mv "$tmp" "$ROOTFS_FILE"
+else
+    actual="$(sha256_file "$ROOTFS_FILE")"
+    if [ "$actual" != "$ALPINE_SHA256" ]; then
+        echo "ERROR: existing Alpine rootfs has an unexpected SHA-256: $actual" >&2
+        echo "Delete $ROOTFS_FILE and rerun this script." >&2
         exit 1
     fi
-
-    cp "$PROOT_BIN" "$PROOT_FILE"
-    chmod +x "$PROOT_FILE"
-    cd "$PROJECT_ROOT"
-
-    echo "✓ Extracted PRoot binary: $PROOT_FILE ($(du -h "$PROOT_FILE" | cut -f1))"
 fi
 
-echo ""
-echo "Assets ready in: $ASSETS_DIR"
-ls -lh "$ASSETS_DIR"
+echo "✓ Alpine rootfs: $ROOTFS_FILE"
+
+missing=0
+for artifact in "$PROOT_ASSET" "$PROOT_JNILIB" "$LOADER64"; do
+    if [ ! -f "$artifact" ]; then
+        echo "ERROR: missing PRoot artifact: $artifact" >&2
+        missing=1
+    fi
+done
+if [ "$missing" -ne 0 ]; then
+    echo "Run ./deps/build_proot.sh first." >&2
+    exit 1
+fi
+
+echo "✓ PRoot artifacts are present"
+echo "Android sandbox assets are ready."
