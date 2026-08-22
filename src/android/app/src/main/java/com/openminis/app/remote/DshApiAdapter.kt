@@ -326,7 +326,8 @@ object DshApiAdapter {
         var running = false
         try {
             val status = ChatMutationMethods.status(context, JSONObject().put("sessionId", sid))
-            title = status.optString("title", "")
+            // 统一 null 归一化：status 不再输出 JSONObject.NULL 标题。
+            title = ChatTitleNormalizer.normalize(status.opt("title"))
             modelName = status.optString("modelName", "")
             running = status.optBoolean("isRunning", false)
         } catch (_: Exception) {
@@ -824,10 +825,7 @@ object DshApiAdapter {
             val modelName = e.optString("modelName", "").ifEmpty { id }
             providerByEntryId[id] = provider
             e.optString("modelId", "").takeIf { it.isNotEmpty() }?.let { entryIdByBaseModel[it] = id }
-            byProvider.getOrPut(provider) { JSONArray() }.put(JSONObject().apply {
-                put("id", id)
-                put("name", modelName)
-            })
+            byProvider.getOrPut(provider) { JSONArray() }.put(modelCatalogEntry(e, id, modelName))
         }
 
         val groups = JSONArray()
@@ -839,6 +837,7 @@ object DshApiAdapter {
         }
 
         var currentEntryId = ""
+        var currentEffort = ""
         val sid = payload.optString("sessionId")
         if (sid.isNotEmpty()) {
             try {
@@ -849,6 +848,10 @@ object DshApiAdapter {
                 if (currentEntryId.isEmpty()) {
                     currentEntryId = session?.modelId?.let(entryIdByBaseModel::get).orEmpty()
                 }
+                // 双向同步：手机端设置的思考强度比“默认 off”更权威。
+                // session.thinkingOverride 存的是 enum 名（null = 从未设置 =
+                // 实际上处于 off）。
+                currentEffort = session?.thinkingOverride?.lowercase().orEmpty()
             } catch (_: Exception) {
             }
         }
@@ -860,11 +863,60 @@ object DshApiAdapter {
                 .put("provider", providerByEntryId[currentEntryId]
                     ?: byProvider.keys.firstOrNull()
                     ?: "OpenMinis")
-                .put("model", currentEntryId.ifEmpty { "unconfigured" }))
+                .put("model", currentEntryId.ifEmpty { "unconfigured" })
+                .apply {
+                    // 只有模型本身支持推理时才回传 effort，避免 schema 校验
+                    // 通过但 UI 显示奇怪状态的组合。
+                    val reasoning = currentReasoningBlock(entries, currentEntryId)
+                    if (reasoning != null && currentEffort.isNotEmpty()) {
+                        put("reasoningEffort", currentEffort.takeIf { e ->
+                            reasoning.optJSONArray("efforts")?.let { arr ->
+                                (0 until arr.length()).any { arr.optJSONObject(it)?.optString("id") == e }
+                            } == true
+                        }.orEmpty())
+                    }
+                })
             put("routable", true)
             put("groups", groups)
             put("failures", JSONArray())
         }
+    }
+
+    /** One modelCatalogModelSchema row (client.js:5316) with reasoning metadata. */
+    private fun modelCatalogEntry(e: JSONObject, id: String, modelName: String): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("name", modelName)
+        put("description", e.optString("modelId", modelName))
+        DshReasoningCatalog.reasoningBlock(
+            supportsReasoning = e.isNull("supportsReasoning") ?: e.optBoolean("supportsReasoning", false),
+            maxCeiling = maxThinkingLevelFor(e),
+        )?.let { put("reasoning", it) }
+    }
+
+    /** Ceiling is null when unreachable → OFF, so non-reasoning models stay effort-free. */
+    private fun maxThinkingLevelFor(e: JSONObject): com.openminis.app.data.model.ThinkingLevel {
+        val supports = if (e.isNull("supportsReasoning")) null else e.optBoolean("supportsReasoning", false)
+        if (supports == false) return com.openminis.app.data.model.ThinkingLevel.OFF
+        // Catalog ceiling is keyed by the BASE model id (family rules match the
+        // public model id), and modelsList already exposes that as `modelId`.
+        return com.openminis.app.provider.ThinkingLevelCatalog.declaredMaxLevel(
+            e.optString("modelId", ""),
+        ) ?: com.openminis.app.data.model.ThinkingLevel.XHIGH
+    }
+
+    /** Resolve the reasoning block of the entry the session is currently bound to. */
+    private fun currentReasoningBlock(entries: JSONArray, entryId: String): JSONObject? {
+        if (entryId.isEmpty()) return null
+        for (i in 0 until entries.length()) {
+            val e = entries.optJSONObject(i) ?: continue
+            if (e.optString("id", "") == entryId) {
+                return DshReasoningCatalog.reasoningBlock(
+                    supportsReasoning = if (e.isNull("supportsReasoning")) null else e.optBoolean("supportsReasoning", false),
+                    maxCeiling = maxThinkingLevelFor(e),
+                )
+            }
+        }
+        return null
     }
 
     /** sessionSelectModelValueSchema (client.js:5386) — `{ selected: ModelSelection }`. */
@@ -1086,9 +1138,10 @@ object DshApiAdapter {
             throw IllegalArgumentException("invalid directory name")
         }
         val targetPath = "${parent.trimEnd('/')}/$name"
-        if (RemotePermissionPolicy.preset(context) == RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
-            targetPath != WORKSPACE_PATH && !targetPath.startsWith("$WORKSPACE_PATH/")) {
-            throw IllegalArgumentException("workspace-write preset: directories are limited to $WORKSPACE_PATH")
+        if (!isWorkspacePath(targetPath) &&
+            !RemotePermissionPolicy.allowsCapability(context, RemoteCapabilityCatalog.SANDBOX_FS)
+        ) {
+            throw IllegalArgumentException("该目录不在工作区内；开启「沙箱任意路径文件访问」能力后才能创建")
         }
         val sessionId = latestSessionId(context)
             ?: throw IllegalArgumentException("create a session before creating a workspace directory")
@@ -1116,6 +1169,9 @@ object DshApiAdapter {
         if (parts.any { it == ".." }) throw IllegalArgumentException("'..' is not allowed")
         return "/" + parts.filterNot { it == "." }.joinToString("/")
     }
+
+    private fun isWorkspacePath(path: String): Boolean =
+        path == WORKSPACE_PATH || path.startsWith("$WORKSPACE_PATH/")
 
     /** Resolve through the same PRoot mapping while enforcing the real host root. */
     private fun resolveSessionPath(context: Context, sessionId: String, linuxPath: String): File {
@@ -1608,10 +1664,13 @@ object DshApiAdapter {
                 applyAppLocale(context, preference)
             }
             "permission" -> {
+                if (!RemotePermissionPolicy.allowsCapability(context, RemoteCapabilityCatalog.PERMISSION_MANAGE)) {
+                    throw IllegalArgumentException("权限管理已在 Web 端关闭：要修改权限，请回到 Android 手机设置页操作")
+                }
                 val preset = next.optString("defaultPreset", "")
-                if (preset != RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
-                    preset != RemotePermissionPolicy.PRESET_DANGER_FULL
-                ) throw IllegalArgumentException("invalid permission preset")
+                if (!RemoteCapabilityCatalog.isKnownPreset(preset)) {
+                    throw IllegalArgumentException("invalid permission preset")
+                }
                 RemotePermissionPolicy.setPreset(context, preset)
             }
             "agent-presets" -> if (next.optString("default", "default") != "default") {

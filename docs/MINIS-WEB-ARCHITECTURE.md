@@ -10,8 +10,13 @@ Android 的 `ChatViewModel`、Room、Repository、`SessionEventHub`、AlarmManag
 
 默认前端位于 `src/android/app/src/main/assets/minis/`。它基于 DeepSeek Harness
 `0.1.0-rc.8` 的 MIT 源码和 wire schema 进行 source-adapted 移植：React/Cordis 静态 bundle
-随 APK 分发，`minis-control.js/css` 把 OpenMinis 管理能力嵌入 Harness Settings。用户可见品牌
-为 Minis；内部 `@deepseek-ai/dsh-*` 模块 ID 是加载和协议兼容所需，不应盲目改名。
+随 APK 分发。OpenMinis 管理能力现在由正式 Client Plugin
+（`web/minis-client-plugin/` → `plugins/@openminis/minis-client-settings/client.js`）承载：
+它复用 DSH 的 `settings.section` slot、`ctx.slots.inject`、`createSnapshotStore` 与 locale
+基础设施，在 Settings 注册「Minis 控制台」页并完全用 React 投影 Android 状态；
+`@deepseek-ai/dsh-client-ui-settings-general` 已恢复为上游 rc.8 官方产物，不再承担
+OpenMinis 功能。用户可见品牌为 Minis；内部 `@deepseek-ai/dsh-*` 模块 ID 是加载和协议
+兼容所需，不应盲目改名。
 
 旧 `assets/remote/` 只保留兼容页面和许可证。服务器将 `/remote/` 与 `/dsh/` 重定向到 `/`。
 
@@ -52,7 +57,7 @@ history/snapshot，不能猜测遗漏事件。
 | Session / message / model / thinking | `ChatViewModel`、Chat Repository、session model binding |
 | Workspace | 原生 `FolderEntity` 会话分组 |
 | Goal / Todo / Plan / deliverable | `AgentStateStore` |
-| Theme / locale / permission preset | Android 设置与 `RemotePermissionPolicy` |
+| Theme / locale / permission | Android 设置与 `RemotePermissionPolicy`（逐能力开关，SharedPreferences 为唯一事实源） |
 | Provider / model groups | `ProviderRepository` |
 | Skills / MCP / memory / SOUL | 对应原生 Repository/Store |
 | Scheduled tasks | `ScheduledTaskManager` / AlarmManager |
@@ -72,10 +77,11 @@ Skill/MCP URL 导入统一经过 `SafeRemoteImporter`：只允许公开 HTTPS/44
 ## 安全边界
 
 - 登录密码、HttpOnly Cookie、Host/Origin 校验和请求大小限制在适配器之前执行；
-- Web RPC 只开放明确能力族，并单独拒绝凭据导出、日志/崩溃正文和诊断写操作；
+- Web RPC 改为“方法 → 能力”显式映射（`RemoteCapabilityCatalog`），不再使用前缀白名单：未登记/未来新增的方法默认拒绝；
 - API Key、环境变量、MCP Header/环境值采用 write-only 或 `hasValue` 元数据；
-- 默认 Workspace Write 只允许受控工作区写入；
-- Web 不开放 DebugServer 的截图、点击、输入注入、任意 Shell、任意文件或 Root 能力；
+- 工作区写入默认开启且始终限定在 `/var/minis/workspace`；工作区以外路径需要默认关闭的 `sandbox.fs` 能力；
+- 设备控制（`device.view`/`device.control`/`ui.inspect`）、凭据导出、诊断正文、管理员操作默认关闭，且必须由用户在手机或网页“权限”页逐项开启；
+- `permission.manage` 在 Web 端关闭后，Web 无法再修改任何能力开关（含重新开启它自己），只能回手机恢复；
 - Android SAF、系统角色、电池、自启动、悬浮窗等授权必须由用户在手机系统界面完成。
 
 ## 不作出的声明

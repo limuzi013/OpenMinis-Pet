@@ -192,9 +192,11 @@ class DebugRPCHandler(private val context: Context) {
             "agent.jobs.list" -> AgentRpcMethods.jobsList(context, params)
             "agent.jobs.cancel" -> AgentRpcMethods.jobsCancel(context, params)
 
-            // Settings (permission presets / sandbox introspection)
+            // Settings (permission presets / per-capability switches / sandbox introspection)
             "settings.permissionPreset.get" -> SettingsRpcMethods.permissionPresetGet(context, params)
             "settings.permissionPreset.set" -> SettingsRpcMethods.permissionPresetSet(context, params)
+            "settings.capabilities.get" -> SettingsRpcMethods.capabilitiesGet(context, params)
+            "settings.capabilities.set" -> SettingsRpcMethods.capabilitiesSet(context, params)
             "settings.sandbox.get" -> SettingsRpcMethods.sandboxGet(context, params)
 
             // Skills

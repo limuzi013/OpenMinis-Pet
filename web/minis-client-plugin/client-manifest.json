@@ -1,0 +1,10 @@
+{
+  "id": "@openminis/minis-client-settings",
+  "inject": [
+    "@deepseek-ai/dsh-client-runtime",
+    "@deepseek-ai/dsh-client-ui-settings",
+    "@deepseek-ai/dsh-client-locale"
+  ],
+  "platform": "web",
+  "orderAfter": "@deepseek-ai/dsh-client-ui-settings-general"
+}

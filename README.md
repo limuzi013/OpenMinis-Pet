@@ -65,6 +65,10 @@ Android 原生 App（唯一运行时与数据源）
 ### Minis Web
 
 - 统一的登录页、会话列表、消息/推理/工具事件和响应式设置界面；
+- 「Minis 控制台」是正式 DeepSeek Harness Client Plugin（`web/minis-client-plugin/` →
+  `plugins/@openminis/minis-client-settings/client.js`）：走官方 `settings.section` slot、
+  `createSnapshotStore` 与 locale 基础设施，完全以 React 投影 Android 权威状态，不再使用
+  vanilla DOM 覆盖层；
 - Workspace 映射 Android 会话分组，Goal 映射 `AgentStateStore`；
 - Provider、模型、Skills、MCP、记忆/SOUL、环境、挂载、定时任务和 Agent 设置；
 - Skills/MCP 可粘贴配置或从公开 HTTPS URL 导入；导入器限制 HTTPS/443、重定向、大小，
@@ -77,7 +81,12 @@ Android 原生 App（唯一运行时与数据源）
 - 通用 ZIP 桌面宠物包、悬浮窗、状态动画、模型直聊与语音配置复用；
 - Android `ROLE_ASSISTANT`、VoiceInteraction Session/Recognition 服务及系统助手入口；
 - Shizuku、AXManager 或 Sui 是**可选**的 Android shell/Binder 能力桥，普通聊天和 PRoot
-  沙箱不依赖它们。
+  沙箱不依赖它们；
+- Android Debug 工具链（`android_capabilities` / `android_app` / `android_ui` /
+  `android_logs` / `android_diagnose` / `android_deploy`）：复用现有 Accessibility、Vision、
+  Shizuku、PRoot、ApprovalSeam、JobRegistry 与 SpillPolicy，提供只读能力矩阵、Root
+  主动探测、UI generation/ref 观察、log cursor、APK 按真实 Gradle 输出部署与结构化
+  进程/内存/崩溃诊断；native chroot 仅为实验性 probe，PRoot 仍是默认执行环境。
 
 ## 安全边界
 
@@ -85,10 +94,11 @@ Web Remote 可能通过 Tunnel 暴露到公网，因此默认坚持最小权限�
 
 - 未设置登录密码时拒绝启动；登录使用 PBKDF2-HMAC-SHA256 和 HttpOnly Session Cookie；
 - 默认只监听 `127.0.0.1`，LAN 访问必须显式开启；LAN 模式是明文 HTTP，不应在不可信网络使用；
-- RPC 使用 allowlist，并额外拒绝 Provider 凭据导入/导出、日志正文和崩溃正文等敏感方法；
+- RPC 使用“方法 → 能力”显式映射表（`RemoteCapabilityCatalog`），未登记/未来新增的方法默认拒绝；日志与崩溃正文受 `diagnostics.content`（默认关闭）保护；
 - Provider Key、环境变量值以及 MCP Header/环境值不通过读取接口返回；
-- Web 不开放截图、点击、输入注入、设备 UI 控制、任意 Shell、任意文件访问或 Root；
-- 默认 Workspace Write 只允许网页写 `/var/minis/workspace`；Full Access 必须在设置中二次确认；
+- 设备控制（截图/点击/滚动/输入）、界面检查、凭据导出、任意路径文件访问与管理员操作默认关闭，需在手机或网页“权限”页逐项开启；
+- 工作区文件读写默认开启且始终限定在 `/var/minis/workspace`；工作区以外路径需要默认关闭的 `sandbox.fs`；
+- `permission.manage` 在 Web 端关闭后，网页无法再修改任何能力开关，只能回手机恢复；
 - 新增外部目录必须由用户在 Android SAF 系统选择器中授权，网页只能管理已有挂载。
 
 详细协议与设计见 [Web Remote RPC](docs/WEB-REMOTE-RPC.md) 和
@@ -110,8 +120,11 @@ Android 手机内核 → OpenMinis App UID → PRoot → Alpine rootfs
 | QEMU/KVM + Ubuntu kernel/rootfs | 未实现，需单独评估 | KVM 通常需要 | 是 |
 
 设备通过 Magisk、KernelSU 或 APatch Root 后，App 可以直接执行 `su`，由 Root 管理器向用户弹出
-授权，不必依赖 Shizuku；但本仓库目前**没有直接 `su`/chroot 后端**。Android 也不存在可写进
-Manifest 的标准“Root 权限”。Root 模式若实现，必须留在手机本地并与公网 Web 隔离。
+授权，不必依赖 Shizuku。当前已有**主动探测式 `su` backend**（`PrivilegedCommandRunner` +
+`android_capabilities active_root_probe`）：被动能力查询不会触发授权弹窗，只有显式主动探测
+才请求授权并返回真实 uid/gid/groups/CapEff/SELinux；`uid=0` 不会被视为全能力。native
+chroot/mount 仅是实验性 `probe_native_chroot`，未通过 parity tests 前不会替换 PRoot，也不会
+修改全局 SELinux 策略。Root 能力全部留在手机本地，与公网 Web 隔离。
 
 完整概念和实现边界见 [App 沙箱、Ubuntu 与 Root](docs/LINUX-SANDBOX-ROOT-AND-UBUNTU.md)。
 Xiaomi 15 `dada` 的手机系统级移植评估另见
@@ -188,6 +201,7 @@ pet.15 已完成的验证包括：
 |---|---|
 | `src/android/` | Android App、Compose UI、Room、Provider 与 Remote 后端 |
 | `src/android/app/src/main/assets/minis/` | 默认 Minis Web bundle、登录页和控制台 |
+| `web/minis-client-plugin/` | OpenMinis Minis Client Plugin 源码、测试与可重复构建脚本 |
 | `src/android/app/src/main/assets/remote/` | 旧 Web 兼容资源与第三方许可证 |
 | `src/shared/` | Android 构建复用的共享规则/资源 |
 | `deps/` | PRoot submodule 与原生依赖构建脚本 |

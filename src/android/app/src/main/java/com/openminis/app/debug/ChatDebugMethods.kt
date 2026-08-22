@@ -5,6 +5,7 @@ import com.openminis.app.MinisApp
 import com.openminis.app.data.db.MessageEntity
 import com.openminis.app.data.repository.ChatRepository
 import com.openminis.app.data.repository.ProviderRepository
+import com.openminis.app.remote.ChatTitleNormalizer
 import com.openminis.app.service.SessionActivityTracker
 import org.json.JSONArray
 import org.json.JSONObject
@@ -47,7 +48,7 @@ internal object ChatDebugMethods {
             val modelDisplay = resolveModelDisplay(provRepo, session.modelId)
             arr.put(JSONObject().apply {
                 put("id", session.id)
-                put("title", session.title ?: JSONObject.NULL)
+                put("title", ChatTitleNormalizer.normalize(session.title))
                 put("modelId", session.modelId)
                 put("modelName", modelDisplay)
                 put("source", session.source ?: JSONObject.NULL)
@@ -78,7 +79,7 @@ internal object ChatDebugMethods {
         val msgs = repo.dao.loadMessages(sessionId)
         return JSONObject().apply {
             put("id", session.id)
-            put("title", session.title ?: JSONObject.NULL)
+            put("title", ChatTitleNormalizer.normalize(session.title))
             put("modelId", session.modelId)
             put("modelName", resolveModelDisplay(provRepo, session.modelId))
             put("source", session.source ?: JSONObject.NULL)

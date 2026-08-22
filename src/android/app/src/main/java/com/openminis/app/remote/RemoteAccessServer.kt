@@ -237,6 +237,13 @@ class RemoteAccessServer(
                             respondJson(output, 403, JSONObject().put("error", "cross-origin websocket rejected"))
                             return
                         }
+                        // Capability gate also applies to the event stream: with
+                        // chat disabled the socket must not keep pushing the
+                        // session journal to the browser.
+                        if (!RemotePermissionPolicy.allowsCapability(appContext, RemoteCapabilityCatalog.CHAT)) {
+                            respondJson(output, 403, JSONObject().put("error", "聊天能力已关闭，无法订阅会话事件"))
+                            return
+                        }
                         // The WebSocket reader must not time out halfway
                         // through a masked frame.  Its own ping/pong deadline
                         // below detects dead peers, and socket.use{} closes a
@@ -526,6 +533,18 @@ class RemoteAccessServer(
     }
 
     private fun routeApi(req: Request, out: BufferedOutputStream) = runBlocking {
+        // Per-route capability gate (the DSH and /api/rpc branches are gated
+        // inside their own handlers because they are method-granular).
+        val routeCap = RemoteCapabilityCatalog.capabilityForHttpRoute(req.method, req.path)
+        if (routeCap != null && !RemotePermissionPolicy.allowsCapability(appContext, routeCap)) {
+            respondJson(out, 403, JSONObject().apply {
+                put("error", "该接口需要开启能力：${RemoteCapabilityCatalog.byId(routeCap)?.label ?: routeCap}")
+                put("capability", routeCap)
+                put("enabled", false)
+                put("hint", "请在 Android 手机设置页或 Minis Web 控制台的权限页开启该能力")
+            })
+            return@runBlocking
+        }
         when (req.path) {
             "/api/status" -> respondJson(out, 200, JSONObject().apply {
                 put("ok", true); put("platform", "android"); put("port", port); put("bindHost", bindHost)
@@ -541,6 +560,54 @@ class RemoteAccessServer(
                     runCatching { Thread.sleep(350L) }
                     runCatching { RemoteAccessService.restart(appContext) }
                 }, "remote-restart").apply { isDaemon = true }.start()
+            }
+            // 细粒度权限：GET 读取全量能力状态；PATCH 只翻转单个能力。
+            // permission.manage 关闭后所有写入（含重新开启自身）都在这里拒绝。
+            "/api/permissions" -> when (req.method) {
+                "GET" -> {
+                    respondJson(out, 200, JSONObject().apply {
+                        put("preset", RemotePermissionPolicy.preset(appContext))
+                        put("capabilities", RemoteCapabilityCatalog.capabilitiesJson(
+                            RemotePermissionPolicy.capabilityState(appContext)
+                        ))
+                    })
+                }
+                "PATCH", "PUT", "POST" -> {
+                    if (!RemotePermissionPolicy.allowsCapability(appContext, RemoteCapabilityCatalog.PERMISSION_MANAGE)) {
+                        respondJson(out, 403, JSONObject().apply {
+                            put("error", "权限管理已在 Web 端关闭：要修改能力开关，请回到 Android 手机的设置页操作")
+                            put("capability", RemoteCapabilityCatalog.PERMISSION_MANAGE)
+                            put("enabled", false)
+                        })
+                        return@runBlocking
+                    }
+                    val body = JSONObject(req.body)
+                    if (body.has("preset")) {
+                        val preset = body.optString("preset", "")
+                        if (!RemotePermissionPolicy.setPreset(appContext, preset)) {
+                            throw IllegalArgumentException("preset must be workspace-write or danger-full-access")
+                        }
+                    } else {
+                        val id = body.optString("capability", "").ifEmpty {
+                            throw IllegalArgumentException("missing 'capability'")
+                        }
+                        if (body.has("enabled")) {
+                            if (!RemotePermissionPolicy.setCapability(appContext, id, body.getBoolean("enabled"))) {
+                                throw IllegalArgumentException("unknown capability: $id")
+                            }
+                        } else {
+                            throw IllegalArgumentException("missing 'enabled'")
+                        }
+                    }
+                    respondJson(out, 200, JSONObject().apply {
+                        put("ok", true)
+                        put("preset", RemotePermissionPolicy.preset(appContext))
+                        put("capabilities", RemoteCapabilityCatalog.capabilitiesJson(
+                            RemotePermissionPolicy.capabilityState(appContext)
+                        ))
+                    })
+                }
+                else -> respondJson(out, 405, JSONObject().put("error", "method not allowed"))
             }
             "/api/sessions" -> {
                 val limit = (req.query["limit"]?.toIntOrNull() ?: 100).coerceIn(1, 500)
@@ -580,22 +647,43 @@ class RemoteAccessServer(
                 routeMinisClientResponse(req, out)
             }
             "/api/rpc" -> {
-                // 转发到 App 内部的 JSON-RPC 分发器，但只放行白名单方法。
+                // 转发到 App 内部的 JSON-RPC 分发器。门控改为“明确的方法→能力
+                // 映射表”，不再使用前缀白名单：未登记/未来新增的方法一律拒绝。
                 val rpcBody = JSONObject(req.body)
                 val method = rpcBody.optString("method")
-                if (!isRpcMethodAllowed(method)) {
+                val unconditional = RemoteCapabilityCatalog.isUnconditionalRpcMethod(method)
+                val granted = rpcCapabilityGranted(method)
+                if (granted == null && !unconditional) {
                     respondJson(
                         out, 403,
                         JSONObject()
                             .put("error", "method not allowed over web remote: $method")
-                            .put("allowed", JSONArray(RPC_ALLOWED_PREFIXES.toList())),
+                            .put("method", method),
                     )
+                    return@runBlocking
+                }
+                if (!unconditional && !granted!!.second) {
+                    respondJson(
+                        out, 403,
+                        JSONObject().apply {
+                            put("error", "capability $method 所属能力未开启：${RemoteCapabilityCatalog.byId(granted.first)?.label ?: granted.first}")
+                            put("method", method)
+                            put("capability", granted.first)
+                            put("enabled", false)
+                            put("hint", "请在 Android 手机设置页或 Minis Web 控制台的权限页开启该能力")
+                        },
+                    )
+                    return@runBlocking
+                }
+                if (!rpcBody.has("jsonrpc")) rpcBody.put("jsonrpc", "2.0")
+                if (!rpcBody.has("id")) rpcBody.put("id", 1)
+                val raw = DebugRPCHandler(appContext).handle(rpcBody.toString())
+                if (method == "rpc.discover") {
+                    respond(out, 200, "application/json; charset=utf-8", filterWebDiscover(raw))
                 } else {
-                    if (!rpcBody.has("jsonrpc")) rpcBody.put("jsonrpc", "2.0")
-                    if (!rpcBody.has("id")) rpcBody.put("id", 1)
-                    val raw = DebugRPCHandler(appContext).handle(rpcBody.toString())
                     respond(out, 200, "application/json; charset=utf-8", redactWebRpcResponse(method, raw))
                 }
+                return@runBlocking
             }
             "/api/models" -> {
                 respondJson(out, 200, ChatDebugMethods.modelsList(appContext, JSONObject()))
@@ -703,14 +791,15 @@ class RemoteAccessServer(
                     // the path again, but we must reject escapes BEFORE any
                     // write happens.
                     resolveSessionFile(sid, b.optString("path"))
-                    // Permission preset: the default workspace-write mode only
-                    // allows writing inside /var/minis/workspace. Full Access
-                    // lifts that. This makes the settings preset a real gate
-                    // instead of a decorative switch.
-                    if (RemotePermissionPolicy.preset(appContext) == RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
-                        !isWorkspacePath(b.optString("path"))
+                    // Capability gate: workspace writes need files.write;
+                    // anything outside the workspace additionally needs the
+                    // (default-off) sandbox.fs capability. This makes the
+                    // capability switches the real gate instead of a
+                    // decorative preset.
+                    if (!isWorkspacePath(b.optString("path")) &&
+                        !RemotePermissionPolicy.allowsCapability(appContext, RemoteCapabilityCatalog.SANDBOX_FS)
                     ) {
-                        throw IllegalArgumentException("workspace-write preset: writes are limited to /var/minis/workspace")
+                        throw IllegalArgumentException("该路径不在工作区内；开启「沙箱任意路径文件访问」能力后才能写入")
                     }
                     val args = JSONObject().put("tool_title", "Write remote file")
                         .put("path", b.optString("path"))
@@ -749,11 +838,11 @@ class RemoteAccessServer(
                 if (target.isFile && target.length() > MAX_EDIT_FILE_BYTES) {
                     throw IllegalArgumentException("file is too large for the Web editor (${target.length()} bytes; max $MAX_EDIT_FILE_BYTES)")
                 }
-                // Permission preset gate, same policy as /api/file writes.
-                if (RemotePermissionPolicy.preset(appContext) == RemotePermissionPolicy.PRESET_WORKSPACE_WRITE &&
-                    !isWorkspacePath(b.optString("path"))
+                // Capability gate, same policy as /api/file writes.
+                if (!isWorkspacePath(b.optString("path")) &&
+                    !RemotePermissionPolicy.allowsCapability(appContext, RemoteCapabilityCatalog.SANDBOX_FS)
                 ) {
-                    throw IllegalArgumentException("workspace-write preset: edits are limited to /var/minis/workspace")
+                    throw IllegalArgumentException("该路径不在工作区内；开启「沙箱任意路径文件访问」能力后才能编辑")
                 }
                 val args = JSONObject().put("tool_title", "Edit remote file").put("path", b.optString("path"))
                 if (b.has("edits")) args.put("edits", b.get("edits"))
@@ -784,10 +873,37 @@ class RemoteAccessServer(
                 if (DshApiAdapter.isDshMethod(req.path) && req.method == "POST") {
                     val dshMethod = req.path.removePrefix("/api/")
                     val envelope = JSONObject(req.body)
+                    val dshCap = RemoteCapabilityCatalog.capabilityForDshRequest(
+                        dshMethod, envelope.optJSONObject("payload")
+                    )
+                    if (dshCap == null || !RemotePermissionPolicy.allowsCapability(appContext, dshCap)) {
+                        respondJson(out, 403, JSONObject().apply {
+                            put("error", "DSH 方法 $dshMethod 需要开启能力：${dshCap?.let { RemoteCapabilityCatalog.byId(it)?.label ?: it } ?: "未映射（默认拒绝）"}")
+                            put("method", dshMethod)
+                            put("capability", dshCap ?: "")
+                            put("enabled", false)
+                            put("hint", "请在 Android 手机设置页或 Minis Web 控制台的权限页开启该能力")
+                        })
+                        return@runBlocking
+                    }
                     val result = DshApiAdapter.handle(appContext, dshMethod, envelope)
                     respondJson(out, 200, result)
                 } else {
-                    respondJson(out, 404, JSONObject().put("error", "not found"))
+                    // Unknown DSH-shaped calls (client-request envelope) are
+                    // explicitly denied, for the same reason unknown RPC
+                    // methods are: an unlisted method must never fall through.
+                    val looksLikeDsh = req.method == "POST" &&
+                        runCatching { JSONObject(req.body).optString("type") == "client-request" }.getOrDefault(false)
+                    if (looksLikeDsh) {
+                        respondJson(out, 403, JSONObject().apply {
+                            put("error", "unknown DSH method (not mapped to any capability — denied)")
+                            put("method", dshMethod0(req))
+                            put("capability", "")
+                            put("enabled", false)
+                        })
+                    } else {
+                        respondJson(out, 404, JSONObject().put("error", "not found"))
+                    }
                 }
             }
         }
@@ -1891,54 +2007,47 @@ class RemoteAccessServer(
 
 
     /**
-     * Method families reachable from the browser.
-     *
-     * The `debug.` family is only allowed for the read-only diagnostic subset:
-     * logs, crash reports, and app metadata. Everything that amounts to remote
-     * control of the phone — tap, inputText, screenshot, ls, readFile,
-     * writeFile, shellExecute and the browser/UI-inspection methods — stays off
-     * this surface. Web Remote can be published to the open internet through a
-     * tunnel, so the local debug server on 127.0.0.1:5321 remains the only way
-     * to reach those methods.
-     *
-     * The writable families below (skills/memory/soul/mcp/scheduled) can change
-     * or delete on-device data, so the Web Remote login password is the
-     * boundary protecting them when a tunnel is enabled.
+     * Result of the RPC capability gate: null = method not mapped (deny),
+     * otherwise the capability id + whether it is currently enabled.
      */
-    private val RPC_ALLOWED_PREFIXES = arrayOf(
-        "provider.", "chat.", "rpc.discover",
-        "skills.", "memory.", "soul.",
-        "mcp.", "scheduled.", "environments.", "storage.",
-        "agent.",
-        "settings.",
-        "debug.logs.", "debug.crash.", "debug.appInfo"
-    )
+    private fun rpcCapabilityGranted(method: String): Pair<String, Boolean>? {
+        if (RemoteCapabilityCatalog.isUnconditionalRpcMethod(method)) {
+            return null // treated as allowed by the caller
+        }
+        val cap = RemoteCapabilityCatalog.capabilityForRpcMethod(method) ?: return null
+        return cap to RemotePermissionPolicy.allowsCapability(appContext, cap)
+    }
 
     /**
-     * Methods that fall under an allowed prefix but must still be blocked
-     * over the Web Remote:
-     *  - provider.export / provider.import carry the stored API keys /
-     *    OAuth credentials (base64-wrapped) and arbitrary provider config;
-     *    the Web Remote can be published through a public tunnel, so those
-     *    must never be reachable from the browser.
-     *  - debug.logs.setEnabled is a state mutation, not read-only
-     *    diagnostics.
-     *
-     * Keep this list in sync whenever a new sensitive method is added to
-     * DebugRPCHandler: a prefix allowlist protects the *shape* of the RPC
-     * surface, the deny list protects its *credentials*.
+     * `rpc.discover` over the Web Remote: only methods that have an explicit
+     * mapping AND whose capability is currently enabled are listed, each
+     * annotated with its `capability` id. The catalog itself rides along so
+     * the Web console can render the permission page without a second round
+     * trip. Unknown/future methods never appear (they are denied by the gate
+     * anyway and must not be advertised).
      */
-    private val RPC_DENIED_METHODS = setOf(
-        "provider.export", "provider.import",
-        "debug.logs.setEnabled", "debug.logs.read", "debug.crash.read",
-    )
-
-    private fun isRpcMethodAllowed(method: String): Boolean =
-        method.isNotEmpty() &&
-            method !in RPC_DENIED_METHODS &&
-            RPC_ALLOWED_PREFIXES.any {
-                if (it.endsWith(".")) method.startsWith(it) else method == it
-            }
+    private fun filterWebDiscover(raw: String): String {
+        val envelope = runCatching { JSONObject(raw) }.getOrNull() ?: return raw
+        val result = envelope.optJSONObject("result") ?: return raw
+        val all = result.optJSONArray("methods") ?: return raw
+        val visible = JSONArray()
+        for (i in 0 until all.length()) {
+            val method = all.optJSONObject(i) ?: continue
+            val name = method.optString("name", "")
+            if (name.isEmpty()) continue
+            val cap = RemoteCapabilityCatalog.capabilityForRpcMethod(name)
+            if (cap == null) continue
+            if (!RemotePermissionPolicy.allowsCapability(appContext, cap)) continue
+            method.put("capability", cap)
+            visible.put(method)
+        }
+        result.put("methods", visible)
+        result.put("methodCount", visible.length())
+        result.put("capabilities", RemoteCapabilityCatalog.capabilitiesJson(
+            RemotePermissionPolicy.capabilityState(appContext)
+        ))
+        return envelope.toString()
+    }
 
     /** Never return MCP environment/header secret values over the public Web surface. */
     private fun redactWebRpcResponse(method: String, raw: String): String {
@@ -1973,6 +2082,9 @@ class RemoteAccessServer(
             }
         }
     }
+
+    /** Path helper used by the unknown-DSH denial branch. */
+    private fun dshMethod0(req: Request): String = req.path.removePrefix("/api/")
 
     private fun respondJson(
         out: BufferedOutputStream,

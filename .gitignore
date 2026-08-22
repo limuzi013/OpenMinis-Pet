@@ -153,3 +153,6 @@ deps/proot/
 
 # Local build customization with real credential values (mirror ships only .example)
 src/android/app/provider-customization.properties
+
+# Minis client plugin dependencies and generated artifacts
+web/minis-client-plugin/node_modules/

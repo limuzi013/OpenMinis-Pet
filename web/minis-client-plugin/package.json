@@ -1,0 +1,41 @@
+{
+  "name": "@openminis/minis-client-settings",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenMinis Android-authoritative settings projection for the DeepSeek Harness client",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-locale": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.8",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.1",
+    "esbuild": "^0.25.9",
+    "lightningcss": "^1.29.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  }
+}

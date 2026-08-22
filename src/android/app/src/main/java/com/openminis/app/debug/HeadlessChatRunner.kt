@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModelProvider
 import com.openminis.app.MinisApp
 import com.openminis.app.data.model.ThinkingLevel
+import com.openminis.app.remote.ChatTitleNormalizer
 import com.openminis.app.ui.chat.ChatViewModel
 import com.openminis.app.ui.chat.ChatViewModelStore
 import com.openminis.app.ui.chat.InputAttachment
@@ -223,7 +224,28 @@ internal object HeadlessChatRunner {
         for (att in attachments) vm.addAttachment(att)
         if (chatOnly) vm.chatOnlyForNextTurn = true
         vm.sendMessage(text)
-        if (!wait) return@withContext PromptResult(status = "Running", responseText = null, timedOut = false)
+        if (!wait) {
+            // Confirm the stream actually started instead of reporting
+            // accepted-then-silence: sendMessage claims _isStreaming
+            // synchronously, but its early-return guards (no provider,
+            // compact-then-send park, ask-user dialog, already-streaming
+            // enqueue) do not. Poll briefly off-Main so the caller can
+            // distinguish "Running" from "Dropped".
+            val started = withContext(Dispatchers.Default) {
+                withTimeoutOrNull(4000L) {
+                    if (vm.isStreaming.value) {
+                        true
+                    } else {
+                        vm.isStreaming.first { it }
+                    }
+                }
+            }
+            return@withContext PromptResult(
+                status = if (started != null) "Running" else "Dropped",
+                responseText = if (started == null) "message_not_started" else null,
+                timedOut = false,
+            )
+        }
 
         // Wait for isStreaming to be false (sendMessage flips it true synchronously
         // before launching its coroutine; if it never flips true the message was
@@ -676,13 +698,13 @@ internal object HeadlessChatRunner {
             ?: durableStatus.optString("modelName", "")
         val thinking = tail.thinkingLevel?.takeIf { it.isNotBlank() }
             ?: durableStatus.optString("thinkingLevel", "off")
-        val title = durableStatus.opt("title")
+        val title = ChatTitleNormalizer.normalize(durableStatus.opt("title"))
         return JSONObject().apply {
             put("sessionId", sessionId)
             put("isRunning", running)
             put("modelName", model)
             put("thinkingLevel", thinking)
-            if (title != null) put("title", title)
+            if (title.isNotEmpty()) put("title", title)
             put("live", running || tail.messages.values.any { it.isStreaming })
             put("messages", messages)
             put("totalCount", messages.length())
@@ -690,7 +712,7 @@ internal object HeadlessChatRunner {
                 put("isRunning", running)
                 put("modelName", model)
                 put("thinkingLevel", thinking)
-                if (title != null) put("title", title)
+                if (title.isNotEmpty()) put("title", title)
                 tail.turn?.let { put("turn", it) }
             })
         }

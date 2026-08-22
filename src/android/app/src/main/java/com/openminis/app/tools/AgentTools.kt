@@ -29,6 +29,11 @@ object AgentTools {
         memoryEnabled: Boolean = true,
     ): List<AgentToolDefinition> = buildList {
         add(shellExecuteDefinition())
+        // Android development/debug loop. These high-cohesion tools reuse the
+        // existing AccessibilityService, Shizuku, PRoot, approval, checkpoint,
+        // JobRegistry, and output-spill seams rather than creating parallel
+        // runtimes.
+        addAll(com.openminis.app.tools.android.AndroidAgentTools.definitions())
         add(FileReadTool.definition())
         add(FileWriteTool.definition())
         add(FileEditTool.definition())

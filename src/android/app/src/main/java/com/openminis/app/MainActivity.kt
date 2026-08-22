@@ -483,10 +483,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Register for debug screenshot capture (debug builds only)
-        if (BuildConfig.DEBUG) {
-            com.openminis.app.debug.DebugRPCHandler.currentActivity = java.lang.ref.WeakReference(this)
-        }
+        // Register the screenshot/tap target in EVERY build. The local debug
+        // server (5321) only exists on DEBUG builds, and in RELEASE the only
+        // reachable callers are the Web Remote's opt-in device capabilities
+        // (device.view / device.control, both default-off) — so there is no
+        // extra release surface beyond what the user explicitly enabled.
+        com.openminis.app.debug.DebugRPCHandler.currentActivity = java.lang.ref.WeakReference(this)
 
         // Non-null and fully initialized — proven by the guard above.
         val app = requireNotNull(application as? MinisApp)
@@ -662,6 +664,11 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         currentChatSessionId?.let { SessionActivityTracker.setAbsent(it) }
         currentChatSessionId = null
+        // Release the screenshot/tap target on every build: the Web Remote's
+        // device.view / device.control capabilities are user-enabled gates,
+        // and a stale WeakReference would read a destroyed window.
+        val handler = com.openminis.app.debug.DebugRPCHandler.currentActivity
+        if (handler?.get() === this) com.openminis.app.debug.DebugRPCHandler.currentActivity = null
         super.onDestroy()
     }
 

@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.openminis.app.remote.CloudflareTunnelManager
 import com.openminis.app.remote.RemoteAccessPrefs
+import com.openminis.app.remote.RemoteCapabilityCatalog
 import com.openminis.app.remote.RemotePermissionPolicy
 import com.openminis.app.ui.components.MinisAlertDialog
 import com.openminis.app.remote.RemoteAccessService
@@ -72,6 +73,7 @@ fun RemoteAccessSettingsScreen(onBack: () -> Unit) {
     var hostname by remember { mutableStateOf(RemoteAccessPrefs.cloudflareHostname(context)) }
     var apiToken by remember { mutableStateOf(RemoteAccessPrefs.token(context)) }
     var permissionPreset by remember { mutableStateOf(RemotePermissionPolicy.preset(context)) }
+    var capabilityState by remember { mutableStateOf(RemotePermissionPolicy.capabilityState(context)) }
     var pendingDangerConfirm by remember { mutableStateOf(false) }
     // Refreshed on ON_RESUME below so a Wi-Fi switch updates the shown IP.
     var lanIp by remember { mutableStateOf(localIpv4Address() ?: "<phone-ip>") }
@@ -95,6 +97,7 @@ fun RemoteAccessSettingsScreen(onBack: () -> Unit) {
                 tunnelTokenConfigured = RemoteAccessPrefs.hasCloudflareTunnelToken(context)
                 hostname = RemoteAccessPrefs.cloudflareHostname(context)
                 permissionPreset = RemotePermissionPolicy.preset(context)
+                capabilityState = RemotePermissionPolicy.capabilityState(context)
                 lanIp = localIpv4Address() ?: "<phone-ip>"
             }
         }
@@ -343,58 +346,75 @@ fun RemoteAccessSettingsScreen(onBack: () -> Unit) {
         }
 
         SettingsSection(
-            header = "权限预设",
-            footer = "workspace-write：沙箱化 shell + 工作区文件读写 + RPC（默认）。danger-full-access：放开全部能力，未来管理员操作不再拦截。",
+            header = "权限（逐能力开关）",
+            footer = "“工作区写入 / 完整访问”预设已细化为逐能力开关；手机与网页两端看到同一份状态、任何一侧改动立即生效。危险能力（设备控制、凭据导出、管理员操作等）默认关闭。",
         ) {
-            SettingsRow(
-                title = "Workspace Write",
-                subtitle = "沙箱化 shell + 工作区文件读写 + RPC（默认）",
-                icon = Icons.Outlined.SettingsEthernet,
-                showChevron = false,
-                showDivider = true,
-                trailing = {
-                    if (permissionPreset == RemotePermissionPolicy.PRESET_WORKSPACE_WRITE) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    }
-                },
-                onClick = {
-                    if (RemotePermissionPolicy.setPreset(context, RemotePermissionPolicy.PRESET_WORKSPACE_WRITE)) {
-                        permissionPreset = RemotePermissionPolicy.PRESET_WORKSPACE_WRITE
-                        toast("权限预设已保存")
-                    }
-                },
-            )
-            SettingsRow(
-                title = "Danger Full Access",
-                subtitle = "放开全部能力（当前无额外管理员操作）",
-                icon = Icons.Outlined.SettingsEthernet,
-                showChevron = false,
-                showDivider = false,
-                trailing = {
-                    if (permissionPreset == RemotePermissionPolicy.PRESET_DANGER_FULL) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    }
-                },
-                onClick = {
-                    if (permissionPreset != RemotePermissionPolicy.PRESET_DANGER_FULL) {
-                        pendingDangerConfirm = true
-                    }
-                },
-            )
+            // 快速预设（兼容旧 API 语义：批量应用）
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    enabled = permissionPreset != RemotePermissionPolicy.PRESET_WORKSPACE_WRITE,
+                    onClick = {
+                        if (RemotePermissionPolicy.setPreset(context, RemotePermissionPolicy.PRESET_WORKSPACE_WRITE)) {
+                            permissionPreset = RemotePermissionPolicy.PRESET_WORKSPACE_WRITE
+                            capabilityState = RemotePermissionPolicy.capabilityState(context)
+                            toast("已恢复默认能力（工作区写入）")
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("恢复默认") }
+                Button(
+                    enabled = permissionPreset != RemotePermissionPolicy.PRESET_DANGER_FULL,
+                    onClick = { pendingDangerConfirm = true },
+                    modifier = Modifier.weight(1f),
+                ) { Text("全部开启（危险）") }
+            }
+            var previousRisk: String? = null
+            for (cap in RemoteCapabilityCatalog.ALL) {
+                if (cap.risk.name != previousRisk) {
+                    previousRisk = cap.risk.name
+                    Text(
+                        text = cap.risk.label + "风险",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+                    )
+                }
+                SettingsSwitchRow(
+                    title = cap.label,
+                    subtitle = cap.description + "（默认" + if (cap.defaultEnabled) "开启" else "关闭" + "）",
+                    checked = capabilityState[cap.id] == true,
+                    icon = Icons.Outlined.Lock,
+                    onCheckedChange = { value ->
+                        if (RemotePermissionPolicy.setCapability(context, cap.id, value)) {
+                            capabilityState = RemotePermissionPolicy.capabilityState(context)
+                            if (cap.id == RemoteCapabilityCatalog.PERMISSION_MANAGE) {
+                                toast(if (value) "已开启权限管理" else "权限管理已关闭：网页端将无法再修改任何能力开关")
+                            } else {
+                                toast("能力已更新：" + cap.label)
+                            }
+                        }
+                    },
+                    showDivider = false,
+                )
+            }
         }
     }
 
     if (pendingDangerConfirm) {
         MinisAlertDialog(
             onDismissRequest = { pendingDangerConfirm = false },
-            title = "切换到 Danger Full Access？",
-            text = "放开全部远程能力。当前与默认一致，未来管理员操作将不再拦截。确定切换？",
-            confirmText = "切换",
+            title = "开启全部能力？",
+            text = "“全部开启”会放开所有能力（含设备控制、界面检查、凭据导出、任意路径文件访问与管理员操作），且会覆盖当前的逐能力配置。确定？",
+            confirmText = "全部开启",
             dismissText = "取消",
             onConfirm = {
                 if (RemotePermissionPolicy.setPreset(context, RemotePermissionPolicy.PRESET_DANGER_FULL)) {
                     permissionPreset = RemotePermissionPolicy.PRESET_DANGER_FULL
-                    toast("权限预设已保存")
+                    capabilityState = RemotePermissionPolicy.capabilityState(context)
+                    toast("已开启全部能力")
                 }
                 pendingDangerConfirm = false
             },

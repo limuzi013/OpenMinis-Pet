@@ -9,12 +9,23 @@ Web Remote 是 Android 聊天会话的一个已认证远程投影，不是第二
 
 - 浏览器和原生聊天页通过同一个 session 的 `ChatViewModel` 工作；Agent Loop、模型选择、思考强度和取消状态都由该共享绑定持有。
 - HTTP RPC 用于用户发起的命令（发送消息、模型/思考设置、文件操作、控制中心操作）。
-- WebSocket 只负责 server-to-browser 的会话事件和恢复；浏览器不经它发起任意设备控制。
-- Remote 的 RPC allowlist、登录会话、同源校验和文件权限策略仍是安全边界。浏览器不能通过此面调用 DebugServer 的 tap、输入注入、截图、任意调试文件读写或 shell-execute 方法。
+- WebSocket 只负责 server-to-browser 的会话事件和恢复；它只读，不承载设备控制。
+- 安全边界 = 登录会话 + 同源校验 + 逐能力开关（`RemoteCapabilityCatalog`）：每个 RPC/HTTP/DSH 方法映射到唯一能力，未登记/未来方法默认拒绝；设备控制（截图/点击/滚动/输入）、凭据导出、诊断正文等默认关闭。
+
+## 1.1 能力开关（单事实源）
+
+- 定义：`RemoteCapabilityCatalog`（stability id + 中文 label/说明 + 风险 + 默认值 + RPC/HTTP/DSH 映射），纯 Kotlin，JVM 可测。
+- 状态：`RemotePermissionPolicy`（SharedPreferences，`cap.<id>` 键；旧 `preset` 键保留并兼容：`workspace-write`=全部默认，`danger-full-access`=全部开启；升级时把旧的 danger-full-access 一次性物化为全开启）。
+- 两端互通：Android 设置页与 Minis Web 控制台读写同一份 SharedPreferences（Web 经 `settings.capabilities.get/set` 或 `/api/permissions`），改动立即生效；`rpc.discover` 在 Web 侧只返回“已映射且已开启”的方法并附 `capability` 字段。
+- 自锁保护：Web 端关闭 `permission.manage` 后，所有能力写入（含重新开启它自己）被服务端拒绝，只能回手机恢复。
 
 ## 2. 浏览器资源
 
-默认工作台位于 APK 的 `assets/minis/`。会话 UI 是基于 MIT 上游静态产物进行 source-adapted 的 React/Cordis bundle，`minis-control.js/css` 以独立覆盖层提供 App 管理功能；旧 `assets/remote/` 不再是默认前端。用户可见品牌为 Minis，内部 `@deepseek-ai/dsh-*` 模块 ID 和协议名为加载兼容所必需并继续保留。
+默认工作台位于 APK 的 `assets/minis/`。会话 UI 是基于 MIT 上游静态产物进行 source-adapted 的 React/Cordis bundle；App 管理功能由正式 Client Plugin
+（`assets/minis/plugins/@openminis/minis-client-settings/client.js`，源码与构建见
+`web/minis-client-plugin/`）通过 DSH 官方 `settings.section` slot 提供，React 直接从
+已认证 RPC seam 投影 Android 状态；旧 `assets/remote/` 不再是默认前端。用户可见品牌为
+Minis，内部 `@deepseek-ai/dsh-*` 模块 ID 和协议名为加载兼容所必需并继续保留。
 
 浏览器不是第二个 Agent runtime：bundle 的 unary/wire 请求由 `DshApiAdapter` 翻译到 Android 的同一批 Repository、`ChatViewModel`、`SessionEventHub` 和 AlarmManager。
 

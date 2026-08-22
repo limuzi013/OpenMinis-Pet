@@ -7,6 +7,52 @@
 
 ---
 
+## 2026-08-23：Minis 正式 Client Plugin + Android Debug/Root 能力增强
+
+### 工作线 A：Minis Web 架构重构
+
+- 新增正式 DeepSeek Harness Client Plugin `@openminis/minis-client-settings`
+  （`web/minis-client-plugin/`）：官方 `ctx.slots.inject('settings.section')` 注册，
+  复用 `createSnapshotStore`（zustand+immer）与 locale 基础设施；React 独占 UI 树，
+  覆盖原 12 个页面（overview/providers/skills/mcp/memory/system/scheduled/agent/web/
+  device/diagnostics/advanced），一个不漏；
+- 删除 `minis-control.js/css`、`data-minis-control-host`、MutationObserver、unmanaged
+  全局轮询和组件直连 fetch；轮询改为随 section 激活/卸载启停的 controller 生命周期；
+- 恢复 `@deepseek-ai/dsh-client-ui-settings-general` 为上游 rc.8 官方产物（SHA-256
+  `9298ac5b…63da5`），移除 OpenMinis patch；
+- `npm run build` 可重复生成 `client.js` 与 `index.html` 的 `__MINIS_BOOT__` 图（含
+  rev），禁止手工改 bundle；Web 单测 6/6（transport、RPC 错误、401、stale 丢弃、
+  轮询无泄漏）。
+
+### 工作线 B：Android Agent Debug / Root 能力增强
+
+- 新增六个高内聚 Agent 工具：`android_capabilities`（get / active_root_probe /
+  probe_native_chroot）、`android_app`（info/launch/stop/restart/install/uninstall）、
+  `android_ui`（observe/screenshot/click/long_press/set_text/scroll/back/home/wait）、
+  `android_logs`（mark_cursor/snapshot/watch/read/stop/clear）、`android_diagnose`
+  （process/memory/crash/anr/stack/all）、`android_deploy`（inspect_apk/install/launch/
+  install_and_launch）；
+- 只读 `AndroidCapabilityResolver`：root/privileged shell/UI/debug/execution/包可见性
+  逐项 `AVAILABLE/PARTIAL/UNAVAILABLE/REQUIRES_USER_GRANT`，不按 provider 名或
+  `uid=0` 猜测能力；
+- `PrivilegedCommandRunner`：Root `su` backend（被动路径检测、active probe 需审批、
+  解析 uid/gid/groups/CapEff/SELinux context/mode）与现有 Shizuku 复用；风险分级
+  后 install/uninstall/clear/root 操作走 `ApprovalSeam` 一次性审批；
+- UI observation：generation/ref + 窗口指纹 + `STALE_UI_REF`，不跨调用持有
+  AccessibilityNodeInfo；文本输入 ACTION_SET_TEXT 优先，失败时保存/恢复剪贴板；
+- Log cursor：mark_cursor → 操作 → read since cursor，支持 PID 变化、boot change；
+  watch 复用 JobRegistry，大输出复用 SpillPolicy/ContextOffload；
+- APK 部署：只按真实 Gradle `build/outputs/apk` 与 archive 元数据发现/检查，禁止猜
+  固定路径；明确拒绝安装自身（self-update continuous execution UNSUPPORTED）；
+- 系统提示词加入 Debug Loop 规范：构建成功 ≠ 修复完成，必须重跑同一观察/操作路径
+  并以真实证据宣告修复；
+- 单元测试新增 47 项（Root 探测解析、Linux 能力位、logcat/崩溃解析、package 解析、
+  APK Gradle 发现、UI generation/ref 栅栏、风险分类），全部通过；全量 779 测试仅剩
+  14 个既有 OpenAI MockWebServer 环境基线失败；
+- Android 16 arm64 真机（Xiaomi 15）：`adb install -r` 通过并启动 MainActivity。
+
+---
+
 ## 2026-08-22：公开仓库与文档基线整理
 
 - 重写 README、pet.15 Release Notes、构建指南、贡献说明和文档索引，明确当前功能、安全边界、

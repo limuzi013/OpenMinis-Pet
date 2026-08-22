@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.content.FileProvider
 import com.openminis.app.MinisApp
 import com.openminis.app.data.model.ThinkingLevel
+import com.openminis.app.remote.ChatTitleNormalizer
 import com.openminis.app.ui.chat.InputAttachment
 import org.json.JSONObject
 import java.io.File
@@ -201,7 +202,7 @@ internal object ChatMutationMethods {
         val lastMsg = msgs.lastOrNull()
         return JSONObject().apply {
             put("sessionId", sessionId)
-            put("title", s.title ?: JSONObject.NULL)
+            put("title", ChatTitleNormalizer.normalize(s.title))
             put("modelName", resolveDisplay(context, s.modelId))
             put("isRunning", com.openminis.app.service.SessionActivityTracker.isActive(sessionId))
             put("messageCount", msgs.size)
