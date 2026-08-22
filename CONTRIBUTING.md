@@ -1,53 +1,54 @@
-# Contributing to OpenMinis Pet
+# 参与贡献
 
-OpenMinis Pet is an unofficial Android fork of OpenMinis. Fork-specific bugs and feature requests belong
-in this repository, not in the upstream OpenMinis or DeepSeek trackers.
+欢迎为 Minis for Android 提交 Issue 与 Pull Request。
 
-## Report an issue
+## 报告问题
 
-Open: <https://github.com/limuzi013/OpenMinis-Pet/issues>
+打开: <https://github.com/limuzi013/OpenMinis-Pet/issues>
 
-Please include:
+请包含:
 
-- OpenMinis Pet version/versionCode and Android version;
-- device model/ROM and whether it is rooted;
-- exact steps, expected result, and actual result;
-- selected Provider/model when relevant;
-- sanitized App logs or crash metadata.
+- 应用版本/versionCode 与 Android 版本;
+- 设备型号/ROM,以及是否 Root(最好注明 Magisk/KernelSU/APatch,仅作诊断信息);
+- 精确重现步骤、期望结果与实际结果;
+- 相关 Provider/模型;
+- 已脱敏的应用日志或崩溃元数据。
 
-Never paste API keys, OAuth tokens, Web Remote passwords, Cloudflare tunnel tokens, DebugServer tokens,
-private file contents, or unrelated phone data. Reproduce against the App itself; do not inspect other Apps.
+**禁止粘贴**:API Key、OAuth token、Web Remote 密码、Cloudflare Tunnel token、DebugServer
+token、私密文件内容或无关手机数据。请针对应用本身重现,不要检查其他应用。
 
-## Pull requests
+## 提交 Pull Request
 
-Small, focused pull requests are welcome. Before opening one:
+小的、聚焦的 PR 受欢迎。提交前:
 
-1. base it on the current `master` branch;
-2. keep Android behavior authoritative—do not add a second Web-only Agent/runtime/database;
-3. preserve Web Remote allow/deny policy and secret redaction;
-4. do not expose screenshot, input injection, arbitrary Shell/file, credentials, `su`, or Root through Web;
-5. preserve third-party notices and required `@deepseek-ai/dsh-*` compatibility IDs;
-6. update tests and the relevant current documentation, not only the historical changelog;
-7. do not commit generated rootfs/PRoot/Gradle outputs or private customization values.
+1. 基于当前 `master` 分支;
+2. 保持 **Android 为唯一权威数据源** — 不要新增第二套 Web-only Agent/runtime/数据库;
+3. 保留 Web Remote 的「方法→能力」映射与 secret 只写策略;
+4. 不要通过 Web 暴露截图、输入注入、任意 Shell/文件、凭据、`su` 或 Root 能力;
+5. 保留第三方声明与必需的 `@deepseek-ai/dsh-*` 兼容 ID;
+6. 更新测试与当前文档,而不是只改历史日志。
 
-## Build and test
+## 架构红线
 
-Follow [BUILDING.md](BUILDING.md) or [BUILD-CN.md](BUILD-CN.md). The minimum public-repository checks are:
+- 不重复实现第二套 AccessibilityService、Shizuku、PRoot、Job 系统、审批/检查点/Token 计量;
+- 不把 Root、Shizuku、Accessibility、PRoot/chroot 混成一条「权限等级链」;
+- 能力判断必须来自真实探测(`uid=0` 不代表全能力),Root provider 名称只作诊断;
+- native chroot/mount 只允许作为实验性后端;通过完整 parity tests 前不得替换 PRoot;
+  禁止为可用性关闭全局 SELinux;
+- 不手改生成的 Web bundle 或 `__MINIS_BOOT__`;Web 产物只能由
+  `web/minis-client-plugin` 的 `npm run build` 生成;
+- 有副作用操作(install/uninstall/clear/root/mount/chroot)必须接入一次性审批,
+  并复用检查点/ToolResult 治理;
+- 不伪造测试结果;无法设备验证的能力在文档中明确标注。
 
-```bash
-cd src/android
-./gradlew :app:testDebugUnitTest \
-  --tests com.openminis.app.remote.DshApiAdapterTest \
-  --tests com.openminis.app.data.UpdateCheckerVersionTest
-./gradlew :app:assembleDebugAndroidTest
-./gradlew :app:assembleDebug
-```
+## 验证检查
 
-Provider tests that require private OAuth customization or external network fixtures must be reported as
-such; do not delete or weaken them merely to make an unconfigured build green.
+提交前至少运行与你改动相关的最窄检查:
 
-## License
+- Kotlin:`cd src/android && ./gradlew :app:compileDebugKotlin --no-daemon`
+- JVM 单测:改动相关 `--tests` 过滤;
+- 修改了 Android 测试时:`./gradlew :app:assembleDebugAndroidTest`
+- 修改了生产源码/资源时:`./gradlew :app:assembleDebug`
+- 修改了 Web 插件:`cd web/minis-client-plugin && npm run check && npm test && npm run build`
 
-Contributions are distributed under [GPL-3.0](LICENSE), consistent with the repository. By submitting a
-change, you confirm that you have the right to provide it under that license. Third-party code must include
-its source and license information in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+详细构建与环境见 [BUILD-CN.md](BUILD-CN.md);安全边界见 [docs/SECURITY.md](docs/SECURITY.md)。

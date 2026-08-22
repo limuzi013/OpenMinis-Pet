@@ -1,7 +1,7 @@
 # Minis URL Scheme Specification
 
-> **上游草案存档。** 文中仍以 iOS/iSH 路径为主要示例；本 Android-only 分支尚未把全部条款
-> 验证为 pet.15 的正式跨平台契约。Android 当前行为以源码和测试为准。
+> **参考规范。** 文中示例以 iOS/iSH 路径为主;Android 当前行为以源码和测试为准,
+> 由 `MinisUrlMarker`/`MinisOpenUrlBroker` 与 App 内预览路由实现。
 
 **Status:** Draft / historical upstream design
 **Date:** 2026-02-16

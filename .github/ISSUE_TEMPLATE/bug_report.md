@@ -9,15 +9,15 @@ labels: ["bug", "triage"]
 
 <!-- A clear and concise description of the bug. 简要描述遇到的问题。-->
 
-
 ## 📱 Basic Information / 基本信息
 
 | Field | Value |
 |-------|-------|
-| Platform / 平台 | <!-- iOS / Android --> |
-| OS Version / 系统版本 | <!-- e.g. iOS 18.4.1 / Android 15 --> |
-| Minis Version / 应用版本 | <!-- e.g. 1.2.3 (build 456) --> |
-| Device Model / 设备型号 | <!-- e.g. iPhone 16 Pro / Pixel 9 --> |
+| Platform / 平台 | Android |
+| OS Version / 系统版本 | <!-- e.g. Android 15 / 16 --> |
+| Minis Version / 应用版本 | <!-- e.g. 1.00-beta (36) --> |
+| Device Model / 设备型号 | <!-- e.g. Xiaomi 15 / Pixel 9 --> |
+| Rooted? / 是否 Root | <!-- No / Magisk / KernelSU / APatch (diagnostic only) --> |
 
 ## 🔁 Steps to Reproduce / 重现步骤
 
@@ -38,8 +38,3 @@ paste error here
 ## ✅ Expected Behavior / 预期结果
 
 <!-- Optional. What did you expect to happen? 可选，你期望发生什么？-->
-
-
-## 🗂️ Additional Information / 其他辅助信息
-
-<!-- Optional. Crash logs, diagnostic reports, screen recordings, etc. 可选，闪退日志、诊断报告、录屏等。-->

@@ -1,6 +1,6 @@
-# OpenMinis Pet Android 构建说明
+# Minis for Android 构建说明
 
-本文对应当前 `master`。项目只构建 Android `arm64-v8a`；iOS/iSH 已从本分支移除。
+本文对应当前 `master`。项目只构建 Android `arm64-v8a`。
 
 ## 已验证环境
 
@@ -11,12 +11,13 @@
 | Gradle | Wrapper 8.11.1 |
 | Android Gradle Plugin | 8.7.3 |
 | Kotlin | 2.1.0 |
-| Android SDK | compileSdk 36，targetSdk 35，minSdk 26 |
-| NDK | r28+（pet.15 使用 `28.0.13004108`） |
+| Android SDK | compileSdk 36,targetSdk 35,minSdk 26 |
+| NDK | r28+(当前构建使用 `28.0.13004108`) |
 | CMake | 3.22.1 |
+| Node.js | 22+(仅 Minis Web Client Plugin 构建需要) |
 | ABI | `arm64-v8a` |
 
-Windows 原生的非 ASCII/NTFS 路径可能触发 Gradle、CMake、符号链接和性能问题，推荐 WSL 的
+Windows 原生的非 ASCII/NTFS 路径可能触发 Gradle、CMake、符号链接和性能问题,推荐 WSL 的
 ASCII 路径。
 
 ## 1. 克隆源码
@@ -26,80 +27,60 @@ git clone --recurse-submodules https://github.com/limuzi013/OpenMinis-Pet.git
 cd OpenMinis-Pet
 ```
 
-如果已经普通克隆：
+`deps/proot` 是固定 commit 的 submodule;源码压缩包不含其内容,必须递归克隆或手动初始化。
 
-```bash
-git submodule update --init --recursive
-```
-
-`deps/proot` 是固定 commit 的 submodule。缺少它时 `deps/build_proot.sh` 无法构建。
-
-## 2. 配置 SDK/NDK
+## 2. 配置 SDK 与定制
 
 ```bash
 export ANDROID_HOME="$HOME/Android/Sdk"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
-export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"  # 按实际安装目录调整
-```
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"  # 按本机版本调整
 
-需要的常用命令：`bash`、`curl`、`tar`、`make`、`awk`、`sed`、`sha256sum`。
-
-## 3. 准备公开构建配置
-
-```bash
 cp src/android/app/provider-customization.properties.example \
    src/android/app/provider-customization.properties
 ```
 
-留空也可以编译和使用 API Key Provider。公开仓库未提供的 OAuth 定制值只影响对应 OAuth
-功能，缺失时应在运行时明确失败，不会回退到秘密默认值。
+空值对 API Key 类 Provider 合法;需要省略 OAuth 定制值的功能会在运行时显式失败。
 
-## 4. 构建 PRoot
+## 3. 构建沙箱资源
 
 ```bash
 ./deps/build_proot.sh
-```
-
-主要产物：
-
-```text
-src/android/app/src/main/assets/proot-aarch64
-src/android/app/src/main/jniLibs/arm64-v8a/libproot.so
-```
-
-两个 ELF loader：
-
-```text
-libproot-loader.so
-libproot-loader32.so
-```
-
-是仓库中明确保留的 vendored Termux 构建；脚本会核对固定 SHA-256。fork-built PRoot 和 Alpine
-rootfs 是可重建产物并被 `.gitignore` 排除。
-
-## 5. 准备 Alpine rootfs
-
-```bash
 ./scripts/prepare_android_sandbox.sh
 ```
 
-脚本下载固定的 Alpine 3.21.3 arm64 minirootfs 并校验 SHA-256，同时检查 PRoot 产物是否完整。
-旧版本脚本使用的 Termux PRoot 包地址已失效；当前流程只从固定 submodule 构建 PRoot。
+- 第一条从固定的 `OpenMinis/proot` 源码构建 PRoot,产出 `proot-aarch64` 与 `libproot.so`;
+  两个 Android ELF loader 是仓库中明确保留并校验 SHA-256 的 vendored Termux 构建;
+- 第二条下载固定的 Alpine 3.21.3 arm64 minirootfs、校验 SHA-256,并检查 PRoot 产物齐全;
+- 生成的 PRoot 与 Alpine 产物不提交 Git,干净 checkout 后必须重新生成。
 
-## 6. 编译
+## 4. 构建 Minis Web Client Plugin
+
+「Minis 控制台」是正式 DeepSeek Harness Client Plugin;源码在 `web/minis-client-plugin/`,
+生成的 `client.js` 随 APK assets 分发。
+
+```bash
+cd web/minis-client-plugin
+npm install
+npm run check    # tsc --noEmit
+npm test         # vitest
+npm run build    # 生成 plugins/@openminis/minis-client-settings/client.js
+                 # 并更新 assets/minis/index.html 的 boot graph
+```
+
+`npm run build` 是更新浏览器 bundle 与 boot graph 的唯一受支持方式;禁止手工修改生成的
+`client.js` 或 `__MINIS_BOOT__` JSON。
+
+## 5. 构建 APK
 
 ```bash
 cd src/android
 ./gradlew :app:assembleDebug --no-daemon
 ```
 
-输出：
+输出:`src/android/app/build/outputs/apk/debug/app-debug.apk`
 
-```text
-src/android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-安装到连接的 arm64 设备：
+安装到已连接的 arm64 设备:
 
 ```bash
 ./gradlew :app:installDebug
@@ -107,65 +88,53 @@ src/android/app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## 测试
+## 6. 测试
 
 ```bash
 cd src/android
-
-# 当前 Minis/DSH 与版本排序核心 JVM 回归
 ./gradlew :app:testDebugUnitTest \
   --tests com.openminis.app.remote.DshApiAdapterTest \
   --tests com.openminis.app.data.UpdateCheckerVersionTest
 
-# 编译 instrumentation APK
 ./gradlew :app:assembleDebugAndroidTest
-
-# 连接设备后按需运行
-./gradlew :app:connectedDebugAndroidTest
 ```
 
-公开仓库没有部分 OAuth customization 和网络 fixture，因此 38 项 Provider 测试不能作为无配置
-环境下的绿色基线。不要用删除测试的方式伪造全绿。
+只有明确授权的设备才运行 `./gradlew :app:connectedDebugAndroidTest`。38 项 Provider 测试需要
+公开仓库不提供的 OAuth 定制值或网络 fixture;不要为了绿跑删除它们。
 
 ## 常见问题
 
 ### `deps/proot/src` 不存在
 
-```bash
-git submodule update --init --recursive
-```
+执行 `git submodule update --init --recursive`。
 
-### 找不到 NDK
+### 找不到 Android NDK
 
-确认 `ANDROID_NDK_HOME` 指向包含 `toolchains/llvm/prebuilt` 的 NDK r28+ 目录。
+将 `ANDROID_NDK_HOME` 指向包含 `toolchains/llvm/prebuilt` 的 r28+ 目录。
 
-### App 能启动，但所有 Shell 命令失败
+### App 能启动但沙箱命令失败
 
-检查 APK 内是否存在：
-
-```bash
-unzip -l app-debug.apk | grep -E 'libproot|alpine-minirootfs'
-```
-
-至少应包含 `libproot.so`、`libproot-loader.so` 和 Alpine rootfs。重新执行：
+重建并核验沙箱产物:
 
 ```bash
 ./deps/build_proot.sh
 ./scripts/prepare_android_sandbox.sh
+unzip -l src/android/app/build/outputs/apk/debug/app-debug.apk \
+  | grep -E 'libproot|alpine-minirootfs'
 ```
 
-### compileSdk 36 警告 AGP 只测试到 35
+APK 需要 `libproot.so`、64 位 PRoot loader 与 Alpine rootfs。仅启动 App 不是有效的沙箱测试;
+执行一条 shell 命令并断言退出码为 0。
 
-这是 AGP 8.7.3 的兼容性警告，不是当前 pet.15 构建失败；升级 AGP 前应单独跑完整 Compose、KSP、
-CMake 和 instrumentation 回归。
+### 更改 versionName/versionCode
 
-## 签名与发布
+编辑 `src/android/app/build.gradle.kts` 中的 `versionCode`/`versionName`,重新构建,并把 APK
+与哈希同步到 `releases/README.md` 与 `RELEASE-NOTES.md`。
 
-当前 `release` buildType 仍配置 debug signing，且 Debug APK 会启动 DebugServer。它可以用于本地
-构建和自测，**不能直接当生产发布方案**。正式发布至少需要：
+## 发布要求
 
-1. 独立 release keystore 和安全的 CI secret；
-2. release variant 关闭 DebugServer；
-3. 更新 versionCode/versionName；
-4. 完整测试、APK/AAB 签名校验、SHA-256 与对应 source tag；
-5. 更新 `README.md`、`RELEASE-NOTES.md` 和 `releases/README.md`。
+当前 `release` 构建类型仍使用 debug 签名,debug APK 会启动 DebugServer,只适合开发自测。
+生产发布需要长期保管的 release keystore、不启动 DebugServer 的 release 变体、完整安全验收、
+不可变源码 tag 与已发布的产物哈希。
+
+许可证与来源见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。

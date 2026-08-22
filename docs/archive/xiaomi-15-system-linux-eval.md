@@ -3,7 +3,7 @@
 评估日期：2026-08-22。本文只讨论 Xiaomi 15 的**手机系统级**移植；本轮没有刷写 `boot`、
 `init_boot`、`vendor_boot`、`dtbo`、`vbmeta`，也没有让手机进入 fastboot。若问题是替换 App
 内的 Alpine 用户空间、直接申请 Root 或运行独立 VM kernel，请改看
-[`LINUX-SANDBOX-ROOT-AND-UBUNTU.md`](LINUX-SANDBOX-ROOT-AND-UBUNTU.md)。
+[`../EXECUTION-ENVIRONMENT.md`](../EXECUTION-ENVIRONMENT.md)。
 
 ## 结论
 

@@ -1,7 +1,6 @@
 # OpenMinis Pet `v1.00-beta`
 
-发布日期：2026-08-23。**这是 1.00-beta 新版本线的起点**；旧的 `1.12-pet.N` 版本线已从仓库与 GitHub Releases 中移除。
-该版本是 Android arm64 开发/自测构建，与 tag [`v1.00-beta`](https://github.com/limuzi013/OpenMinis-Pet/tree/v1.00-beta) 源码对应。
+发布日期:2026-08-23。这是项目的 **1.00-beta 首个公开版本**,Android arm64 开发/自测构建,与 tag [`v1.00-beta`](https://github.com/limuzi013/OpenMinis-Pet/tree/v1.00-beta) 源码对应。
 
 ## 下载与校验
 

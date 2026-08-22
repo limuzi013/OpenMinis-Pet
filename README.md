@@ -1,112 +1,114 @@
-# OpenMinis Pet
+# Minis for Android
 
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)](https://github.com/limuzi013/OpenMinis-Pet/releases)
 [![Release](https://img.shields.io/badge/release-v1.00--beta-blue)](https://github.com/limuzi013/OpenMinis-Pet/releases/tag/v1.00-beta)
 [![ABI](https://img.shields.io/badge/ABI-arm64--v8a-orange)](#安装)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-OpenMinis Pet 是 [OpenMinis](https://github.com/OpenMinis/OpenMinis) 的非官方 Android 分支。
-它保留原生 Agent、Provider、会话和 PRoot 沙箱，在此基础上加入桌面宠物、默认数字助手，以及与
-Android 数据共用同一后端的 Minis Web 远程工作台。
+Minis 是一个 **Android 原生 Agent 运行时**:手机上运行完整的 LLM Agent(工具调用、文件编辑、
+持续 shell、网页浏览、目标管理),内置 **Alpine Linux + PRoot** 沙箱作为默认执行环境,
+并提供与 Android 共用同一数据源的 **Minis Web** 远程工作台。
 
-> 本项目与 DeepSeek 没有产品关联或官方合作关系。Minis Web 基于 DeepSeek Harness
-> `0.1.0-rc.8` 的 MIT 源码进行 source-adapted 移植，并保留必要的内部模块 ID、版权和许可证。
->
-> 问题请提交到[本仓库 Issues](https://github.com/limuzi013/OpenMinis-Pet/issues)，不要向上游
-> OpenMinis 或 DeepSeek 报告本分支特有问题。
+```text
+Android 原生 App（唯一运行时与数据源）
+├─ Agent Loop / Room / Repository / 会话状态
+├─ Alpine rootfs + PRoot（复用 Android 手机内核）
+├─ 桌面宠物与默认数字助手
+├─ 可选 Shizuku / Sui 权限桥
+└─ RemoteAccessServer
+   ├─ 登录、Host 校验、逐能力 RPC 授权
+   ├─ DshApiAdapter / SessionEventHub
+   └─ assets/minis/（Minis Web,含正式 Client Plugin 控制台）
+```
+
+浏览器不是第二套 Agent:网页中的会话、模型、Workspace、Goal、Skills、MCP、记忆、定时任务和设置
+最终都映射到 Android 现有的 ViewModel、数据库或 Repository。
 
 ## 当前版本
 
 | 项目 | 值 |
 |---|---|
 | Release | [`v1.00-beta`](https://github.com/limuzi013/OpenMinis-Pet/releases/tag/v1.00-beta) |
-| Android 版本 | `1.00-beta`（versionCode 36） |
+| Android 版本 | `1.00-beta`(versionCode 36) |
 | applicationId | `dev.openminispet.android` |
 | ABI | `arm64-v8a` |
 | APK | `OpenMinis-Pet-1.00-beta-arm64-debug.apk` |
 | 大小 | `54,437,205` bytes |
 | SHA-256 | `086ebaf7fc743ded373a1e297f2dbe2ccb653df094de0958760815476aea3a96` |
 
-**当前 APK 使用 Android Debug 签名，只适合开发、自测和源码对应验证，不是生产发布包。**
-生产分发必须关闭 DebugServer、改用长期保管的 release keystore，并完成独立安全验收。
+**当前 APK 使用 Android Debug 签名,仅供开发、自测与源码对应验证,不是生产发布包。**
+生产分发必须关闭 DebugServer、改用长期保管的 release keystore,并完成独立安全验收。
 
 - [下载 APK](https://github.com/limuzi013/OpenMinis-Pet/releases/download/v1.00-beta/OpenMinis-Pet-1.00-beta-arm64-debug.apk)
 - [查看对应源码](https://github.com/limuzi013/OpenMinis-Pet/tree/v1.00-beta)
-- [查看发布说明](RELEASE-NOTES.md)
-
-## 它是什么
-
-```text
-Android 原生 App（唯一运行时与数据源）
-├─ ChatViewModel / Agent Loop / Room / Repository
-├─ Alpine arm64 rootfs + PRoot（复用 Android 手机内核）
-├─ 桌面宠物与默认数字助手
-├─ 可选 Shizuku/AXManager/Sui Android 能力桥
-└─ RemoteAccessServer
-   ├─ 登录、Host 校验、RPC allow/deny policy
-   ├─ DshApiAdapter / SessionEventHub
-   └─ assets/minis/（默认 Minis Web）
-```
-
-浏览器不是第二套 Agent。网页中的会话、模型、思考等级、Workspace、Goal、Skills、MCP、记忆、
-定时任务和设置最终都映射到 Android 现有的 ViewModel、数据库或 Repository。`assets/remote/`
-只保留旧路径和许可证兼容资源；`/`、`/remote/`、`/dsh/` 最终都进入默认 Minis Web。
+- [发布说明](RELEASE-NOTES.md)
 
 ## 主要功能
 
-### Android Agent 与沙箱
+### Agent 与沙箱
 
-- 多 Provider、模型组、OAuth/API Key、图片输入、会话历史和工具调用；
-- 每个会话复用持久 PRoot Shell，工作区、附件、产出和共享目录分层挂载；
-- 文件编辑支持并发串行化、revision 校验、重叠编辑拒绝及大输出落盘；
-- Goal、Todo、Plan、产出文件、反馈、提问卡片和子代理工具使用原生状态源；
-- Skills、MCP、记忆/SOUL、环境变量、外部 SAF 挂载和定时任务管理。
+- 多 Provider、模型组、OAuth/API Key、图片输入、会话历史和工具调用;
+- 每个会话复用持久 PRoot Shell;工作区、附件、产出和共享目录分层挂载;
+- 文件编辑支持并发串行化、revision 校验、重叠编辑拒绝及大输出落盘;
+- Goal、Todo、Plan、产出文件、反馈、提问卡片和子代理工具使用原生状态源;
+- Skills、MCP、记忆/SOUL、环境变量、外部 SAF 挂载和定时任务管理;
+- 工具超时、执行意图检查点、后台作业、Token 计量、上下文压力、结果修剪/落盘、
+  一次性审批和危险命令策略。
 
 ### Minis Web
 
-- 统一的登录页、会话列表、消息/推理/工具事件和响应式设置界面；
-- 「Minis 控制台」是正式 DeepSeek Harness Client Plugin（`web/minis-client-plugin/` →
-  `plugins/@openminis/minis-client-settings/client.js`）：走官方 `settings.section` slot、
-  `createSnapshotStore` 与 locale 基础设施，完全以 React 投影 Android 权威状态，不再使用
-  vanilla DOM 覆盖层；
-- Workspace 映射 Android 会话分组，Goal 映射 `AgentStateStore`；
-- Provider、模型、Skills、MCP、记忆/SOUL、环境、挂载、定时任务和 Agent 设置；
-- Skills/MCP 可粘贴配置或从公开 HTTPS URL 导入；导入器限制 HTTPS/443、重定向、大小，
-  并拒绝 localhost、私网、链路本地和 CGNAT；
-- Session/Workspace 可见页定期与 Android 权威基线对账，设置写入带 revision 冲突检测；
-- 本地监听、显式 LAN 模式和 Cloudflare named tunnel；移动网络 tunnel 固定 HTTP/2。
+- 统一的登录页、会话列表、消息/推理/工具事件和响应式设置界面;
+- 「Minis 控制台」是正式 DeepSeek Harness Client Plugin(`web/minis-client-plugin/` →
+  `assets/minis/plugins/@openminis/minis-client-settings/client.js`):走官方
+  `settings.section` slot、`createSnapshotStore` 与 locale 基础设施,纯 React 投影
+  Android 权威状态,不依赖 DOM 覆盖层;
+- Provider、模型、Skills、MCP、记忆/SOUL、环境、挂载、定时任务和 Agent 设置;
+- Skills/MCP 可粘贴配置或从公开 HTTPS URL 导入;导入器限制 HTTPS/443、重定向、大小,
+  并拒绝 localhost、私网、链路本地和 CGNAT;
+- Session/Workspace 可见页定期与 Android 权威基线对账,设置写入带 revision 冲突检测;
+- 本地监听、显式 LAN 模式和 Cloudflare named tunnel;移动网络 tunnel 固定 HTTP/2。
+
+### Android Debug 工具链
+
+- `android_capabilities` / `android_app` / `android_ui` / `android_logs` /
+  `android_diagnose` / `android_deploy` 六个高内聚 Agent 工具;
+- 只读能力矩阵:root、Shizuku、Accessibility、截图、调试器、执行环境逐项真实探测,
+  `uid=0` 不会被当作全能力;
+- Accessibility UI 观察带 generation/ref 与 `STALE_UI_REF`;API 30+ 系统截图;
+- logcat 游标(mark → 操作 → read since),watch 复用作业系统,大输出自动落盘;
+- APK 按真实 Gradle output 元数据发现/部署,不猜固定路径;
+- 支持 Android 原生 SDK API、Shizuku 与主动授权后的 Root `su`。
 
 ### Android 集成
 
-- 通用 ZIP 桌面宠物包、悬浮窗、状态动画、模型直聊与语音配置复用；
-- Android `ROLE_ASSISTANT`、VoiceInteraction Session/Recognition 服务及系统助手入口；
-- Shizuku、AXManager 或 Sui 是**可选**的 Android shell/Binder 能力桥，普通聊天和 PRoot
-  沙箱不依赖它们；
-- Android Debug 工具链（`android_capabilities` / `android_app` / `android_ui` /
-  `android_logs` / `android_diagnose` / `android_deploy`）：复用现有 Accessibility、Vision、
-  Shizuku、PRoot、ApprovalSeam、JobRegistry 与 SpillPolicy，提供只读能力矩阵、Root
-  主动探测、UI generation/ref 观察、log cursor、APK 按真实 Gradle 输出部署与结构化
-  进程/内存/崩溃诊断；native chroot 仅为实验性 probe，PRoot 仍是默认执行环境。
+- 通用 ZIP 桌面宠物包、悬浮窗、状态动画、模型直聊与语音配置复用;
+- Android `ROLE_ASSISTANT`、VoiceInteraction Session/Recognition 服务及系统助手入口;
+- Shizuku、AXManager 或 Sui 是**可选**的 Android shell/Binder 能力桥,普通聊天和 PRoot
+  沙箱不依赖它们。
 
 ## 安全边界
 
-Web Remote 可能通过 Tunnel 暴露到公网，因此默认坚持最小权限：
+Web Remote 可能通过 Tunnel 暴露到公网,因此默认坚持最小权限:
 
-- 未设置登录密码时拒绝启动；登录使用 PBKDF2-HMAC-SHA256 和 HttpOnly Session Cookie；
-- 默认只监听 `127.0.0.1`，LAN 访问必须显式开启；LAN 模式是明文 HTTP，不应在不可信网络使用；
-- RPC 使用“方法 → 能力”显式映射表（`RemoteCapabilityCatalog`），未登记/未来新增的方法默认拒绝；日志与崩溃正文受 `diagnostics.content`（默认关闭）保护；
-- Provider Key、环境变量值以及 MCP Header/环境值不通过读取接口返回；
-- 设备控制（截图/点击/滚动/输入）、界面检查、凭据导出、任意路径文件访问与管理员操作默认关闭，需在手机或网页“权限”页逐项开启；
-- 工作区文件读写默认开启且始终限定在 `/var/minis/workspace`；工作区以外路径需要默认关闭的 `sandbox.fs`；
-- `permission.manage` 在 Web 端关闭后，网页无法再修改任何能力开关，只能回手机恢复；
-- 新增外部目录必须由用户在 Android SAF 系统选择器中授权，网页只能管理已有挂载。
+- 未设置登录密码时拒绝启动;登录使用 PBKDF2-HMAC-SHA256 和 HttpOnly Session Cookie;
+- 默认只监听 `127.0.0.1`,LAN 访问必须显式开启;LAN 模式是明文 HTTP,不应在不可信网络使用;
+- RPC 使用「方法 → 能力」显式映射表(`RemoteCapabilityCatalog`),未登记/未来新增的方法默认拒绝;
+  日志与崩溃正文受 `diagnostics.content`(默认关闭)保护;
+- Provider Key、环境变量值以及 MCP Header/环境值不通过读取接口返回;
+- 设备控制(截图/点击/滚动/输入)、界面检查、凭据导出、任意路径文件访问与管理员操作默认关闭,
+  需在手机或网页「权限」页逐项开启;
+- 工作区文件读写默认开启且始终限定在 `/var/minis/workspace`;工作区以外路径需要默认关闭的
+  `sandbox.fs`;
+- `permission.manage` 在 Web 端关闭后,网页无法再修改任何能力开关,只能回手机恢复;
+- 新增外部目录必须由用户在 Android SAF 系统选择器中授权,网页只能管理已有挂载;
+- 安装/卸载/清空日志/Root 授权等有副作用操作经过一次性审批(ApprovalSeam);
+- Web 不暴露裸 shell/root/tap/install 等设备直控接口。
 
-详细协议与设计见 [Web Remote RPC](docs/WEB-REMOTE-RPC.md) 和
-[安全加固设计](docs/DESIGN-HARDENING-2026-08-21.md)。
+详细协议见 [Web Remote RPC](docs/WEB-REMOTE-RPC.md) 与 [安全设计](docs/SECURITY.md)。
 
-## Linux、Ubuntu、Root 与 Shizuku
+## 执行环境:PRoot、Root 与 Shizuku
 
-当前源码中的 `PRootKernel` 名称是历史命名，它**不是 App 自带的 Linux 内核**。现状是：
+源码中的 `PRootKernel` 名称是历史命名,它**不是 App 自带的 Linux 内核**。现状是:
 
 ```text
 Android 手机内核 → OpenMinis App UID → PRoot → Alpine rootfs
@@ -114,42 +116,41 @@ Android 手机内核 → OpenMinis App UID → PRoot → Alpine rootfs
 
 | 方案 | 当前状态 | 是否需要 Root | 是否有独立内核 |
 |---|---|---:|---:|
-| Alpine + PRoot | 已实现 | 否 | 否 |
-| Ubuntu rootfs + PRoot | 未实现，可增加为可选 profile | 否 | 否 |
-| Ubuntu rootfs + `su`/namespace/chroot | 未实现 | 是 | 否 |
-| QEMU/KVM + Ubuntu kernel/rootfs | 未实现，需单独评估 | KVM 通常需要 | 是 |
+| Alpine + PRoot | 已实现(默认) | 否 | 否 |
+| Ubuntu rootfs + PRoot | 未实现,可增加为可选 profile | 否 | 否 |
+| Root `su` 直接执行 | 已实现(主动探测后端) | 是 | 否 |
+| Native chroot/mount namespace | 实验性 `probe_native_chroot` | 是 | 否 |
+| QEMU/KVM + Ubuntu kernel/rootfs | 未实现,需单独评估 | KVM 通常需要 | 是 |
 
-设备通过 Magisk、KernelSU 或 APatch Root 后，App 可以直接执行 `su`，由 Root 管理器向用户弹出
-授权，不必依赖 Shizuku。当前已有**主动探测式 `su` backend**（`PrivilegedCommandRunner` +
-`android_capabilities active_root_probe`）：被动能力查询不会触发授权弹窗，只有显式主动探测
-才请求授权并返回真实 uid/gid/groups/CapEff/SELinux；`uid=0` 不会被视为全能力。native
-chroot/mount 仅是实验性 `probe_native_chroot`，未通过 parity tests 前不会替换 PRoot，也不会
-修改全局 SELinux 策略。Root 能力全部留在手机本地，与公网 Web 隔离。
+- Root 设备通过 `su` 工作,不依赖 Shizuku,兼容 Magisk / KernelSU / APatch;
+  Root provider 名称只作为诊断信息,能力判断以真实探测为准;
+- 被动能力查询(如 `android_capabilities get`)不会触发 Root 授权弹窗;只有显式
+  `active_root_probe` 才请求授权并返回 uid/gid/groups/CapEff/SELinux;
+- native chroot/mount 仅实验性;通过完整 parity tests 前不会替换 PRoot;
+  不修改全局 SELinux 策略,chroot 不是容器,构建脚本原则上默认非 root 执行。
 
-完整概念和实现边界见 [App 沙箱、Ubuntu 与 Root](docs/LINUX-SANDBOX-ROOT-AND-UBUNTU.md)。
-Xiaomi 15 `dada` 的手机系统级移植评估另见
-[Xiaomi 15 Linux 评估](docs/LINUX-ON-XIAOMI-15-DADA.md)；那不是本 APK 的安装步骤。
+完整边界见 [执行环境](docs/EXECUTION-ENVIRONMENT.md)。
 
 ## 安装
 
-要求 Android 8.0（API 26）或更高版本的 arm64 设备。
+要求 Android 8.0(API 26)或更高版本的 arm64 设备。
 
 ```bash
 adb install -r OpenMinis-Pet-1.00-beta-arm64-debug.apk
 ```
 
-`applicationId` 与官方版不同，因此可以和官方 OpenMinis 同时安装。首次使用建议：
+首次使用建议:
 
-1. 在 Provider 设置中添加 API Key 或完成对应 OAuth；
-2. 如需桌面宠物，在 Android 系统界面授予悬浮窗权限；
-3. 如需 Web Remote，先设置强密码，再选择仅本机、LAN 或 Cloudflare Tunnel；
-4. HyperOS 用户在系统设置中允许后台运行并开启自启动，否则退到后台后可能冻结 Tunnel；
+1. 在 Provider 设置中添加 API Key 或完成对应 OAuth;
+2. 如需桌面宠物,在 Android 系统界面授予悬浮窗权限;
+3. 如需 Web Remote,先设置强密码,再选择仅本机、LAN 或 Cloudflare Tunnel;
+4. HyperOS 用户在系统设置中允许后台运行并开启自启动,否则退到后台后可能冻结;
 5. 系统角色、电池豁免、自启动和 SAF 目录都必须由用户在手机系统界面授权。
 
 ## 从源码构建
 
-构建环境：Linux/WSL、JDK 17、Android SDK 36、NDK r28+、CMake 3.22.1。
-仓库只构建 `arm64-v8a`。
+构建环境:Linux/WSL、JDK 17、Android SDK 36、NDK r28+、CMake 3.22.1。
+仓库只构建 `arm64-v8a`。完整步骤见 [BUILD-CN.md](BUILD-CN.md) 或 [BUILDING.md](BUILDING.md)。
 
 ```bash
 git clone --recurse-submodules https://github.com/limuzi013/OpenMinis-Pet.git
@@ -160,7 +161,7 @@ cp src/android/app/provider-customization.properties.example \
 
 export ANDROID_HOME="$HOME/Android/Sdk"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
-export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"  # 按本机版本调整
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.0.13004108"
 
 ./deps/build_proot.sh
 ./scripts/prepare_android_sandbox.sh
@@ -169,57 +170,37 @@ cd src/android
 ./gradlew :app:assembleDebug --no-daemon
 ```
 
-APK 输出：`src/android/app/build/outputs/apk/debug/app-debug.apk`。
+APK 输出:`src/android/app/build/outputs/apk/debug/app-debug.apk`。
+Minis Web Client Plugin 单独构建:`cd web/minis-client-plugin && npm install && npm run build`
+(生成 browser bundle 并与 Android assets 同步)。
 
-`deps/proot` 是固定 commit 的 Git submodule；两个 Android ELF loader 是仓库中明确保留并校验
-SHA-256 的 vendored Termux 构建。Alpine rootfs 和 fork-built PRoot 二进制属于可重建产物，
-不提交到 Git。完整说明见 [BUILD-CN.md](BUILD-CN.md) 或 [BUILDING.md](BUILDING.md)。
-
-## 验证状态与已知限制
-
-1.00-beta 已完成的验证包括：
-
-- JDK 17 / SDK 36 下 `:app:assembleDebug`；
-- `DshApiAdapterTest` 与更新版本排序回归测试；
-- Android 16 arm64 真机上的 DSH strict response、settings revision 和 Workspace Repository
-  round-trip（2/2）；
-- Skill/MCP HTTPS 导入、私网拒绝和测试数据清理；
-- APK Signature Scheme v2、覆盖安装保留数据、本机服务和公网登录入口。
-
-仍需注意：
-
-- 当前只有 arm64 debug APK，不支持 32 位设备和 x86 模拟器；
-- 38 项 Provider 测试依赖公开仓库未提供的 OAuth 定制值或网络 fixture；
-- HyperOS 的后台冻结不能由 App 静默解除，需用户手动设置电池与自启动策略；
-- Cloudflare 客户端下载流程目前尚未固定版本与 SHA-256，生产发布前应补齐供应链固定；
-- Ubuntu rootfs、直接 Root 后端、独立 VM kernel 都尚未实现；
-- Shizuku/Root、系统助手、悬浮窗、通知、电池和外部目录权限均不能由网页代替用户授权。
-
-## 仓库与文档
+## 仓库结构
 
 | 路径 | 内容 |
 |---|---|
 | `src/android/` | Android App、Compose UI、Room、Provider 与 Remote 后端 |
-| `src/android/app/src/main/assets/minis/` | 默认 Minis Web bundle、登录页和控制台 |
-| `web/minis-client-plugin/` | OpenMinis Minis Client Plugin 源码、测试与可重复构建脚本 |
-| `src/android/app/src/main/assets/remote/` | 旧 Web 兼容资源与第三方许可证 |
+| `src/android/app/src/main/assets/minis/` | 默认 Minis Web bundle、登录页与官方插件产物 |
+| `web/minis-client-plugin/` | Minis Client Plugin 源码、测试与可重复构建脚本 |
+| `src/android/app/src/main/java/com/openminis/app/tools/android/` | Android Debug 工具链 |
 | `src/shared/` | Android 构建复用的共享规则/资源 |
 | `deps/` | PRoot submodule 与原生依赖构建脚本 |
 | `releases/` | 明确发布且与源码对应的 APK |
-| [`docs/README.md`](docs/README.md) | 当前文档索引及历史文档分类 |
-| [`CHANGELOG-FORK.md`](CHANGELOG-FORK.md) | 按时间记录的 Fork 改动历史 |
+| [`docs/README.md`](docs/README.md) | 文档索引 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 版本变更记录(自 1.00-beta 起) |
 | [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) | 第三方许可证与来源 |
-| [`README-upstream.md`](README-upstream.md) | 上游 OpenMinis 原始说明存档 |
 
-## 与上游的关系和许可证
+## 起源与许可证
 
-| | 官方 OpenMinis | OpenMinis Pet |
-|---|---|---|
-| applicationId | `com.openminis.app` | `dev.openminispet.android` |
-| 平台 | Android + iOS | Android only |
-| 安装关系 | — | 可与官方版共存 |
-| Kotlin namespace | `com.openminis.app` | 保持不变，便于合并上游 |
+本项目作为独立项目发布,首版为 `v1.00-beta`。其代码谱系包含:
 
-本仓库是 OpenMinis 的派生作品，整体继续按 [GPL-3.0](LICENSE) 分发。分发修改后的 APK 时必须
-同时提供对应源码。DeepSeek Harness、主题、PRoot、Alpine 及 Android 依赖的许可信息见
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
+- [OpenMinis](https://github.com/OpenMinis/OpenMinis)(GPL-3.0,派生基础);
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) `0.1.0-rc.8`
+  (MIT,Minis Web 的 source-adapted 前端与 wire schema);
+- PRoot、Alpine、Termux 与各 Android 依赖(见
+  [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) 与
+  [README-upstream.md](README-upstream.md))。
+
+本项目整体按 [GPL-3.0](LICENSE) 分发。分发修改后的 APK 时必须同时提供对应源码。
+
+> 本项目与 DeepSeek 没有产品关联或官方合作关系。问题请提交到
+> [本仓库 Issues](https://github.com/limuzi013/OpenMinis-Pet/issues)。
